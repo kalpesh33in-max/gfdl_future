@@ -1,4 +1,5 @@
 
+
 import asyncio
 import websockets
 import json
@@ -19,7 +20,7 @@ WSS_URL = "wss://nimblewebstream.lisuns.com:4576/"
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
 # Using Continuous Format with .NFO suffix as required
-SYMBOLS_TO_MONITOR = ["SBIN-I.NFO", "HDFCBANK-I.NFO", "ICICIBANK-I.NFO", "BANKNIFTY-I.NFO"]
+SYMBOLS_TO_MONITOR = ["BANKNIFTY-I.NFO", "HDFCBANK-I.NFO", "ICICIBANK-I.NFO", "SBIN-I.NFO"]
 LOT_SIZES = {"BANKNIFTY": 30, "HDFCBANK": 550, "ICICIBANK": 700, "SBIN": 750}
 
 # ============================== STATE & UTILITIES =============================
