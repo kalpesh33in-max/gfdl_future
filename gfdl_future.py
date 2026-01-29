@@ -20,8 +20,8 @@ WSS_URL = "wss://nimblewebstream.lisuns.com:4576/"
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
 # Using Continuous Format with .NFO suffix as required
-SYMBOLS_TO_MONITOR = ["BANKNIFTY-I.NFO", "HDFCBANK-I.NFO", "ICICIBANK-I.NFO", "SBIN-I.NFO"]
-LOT_SIZES = {"BANKNIFTY": 30, "HDFCBANK": 550, "ICICIBANK": 700, "SBIN": 750}
+SYMBOLS_TO_MONITOR = ["AXISBANK-I.NFO", "KOTAKBANK-I.NFO", "RELIANCE-I.NFO"]
+LOT_SIZES = {"AXISBANK": 625, "KOTAKBANK": 2000, "RELIANCE": 500}
 
 # ============================== STATE & UTILITIES =============================
 symbol_data_state = {s: {"price": 0, "oi": 0} for s in SYMBOLS_TO_MONITOR}
@@ -61,10 +61,20 @@ async def process_data(data):
         lot_size = LOT_SIZES.get(base_symbol, 75)
         lots = int(abs(oi_chg) / lot_size)
         
-        # Production threshold (e.g., 50 lots)
+        # Production threshold (e.g., 25 lots)
         if lots >= 25:
+            try:
+                oi_roc = (oi_chg / state["oi"]) * 100
+            except ZeroDivisionError:
+                oi_roc = 0.0
+
             direction = "🔺" if new_price > state["price"] else "🔻"
-            msg = f"🔔 *ALERT: {symbol}* {direction}\nOI Change: {oi_chg} ({lots} lots)\nPrice: {new_price}\nTime: {get_now()}"
+            msg = (f"🔔 *ALERT: {symbol}* {direction}\n"
+                   f"Existing OI: {state['oi']}\n"
+                   f"OI Change: {oi_chg} ({lots} lots)\n"
+                   f"OI RoC: {oi_roc:.2f}%\n"
+                   f"Price: {new_price}\n"
+                   f"Time: {get_now()}")
             await send_telegram(msg)
             print(f"🚀 Alert: {symbol} OI change detected.", flush=True)
 
