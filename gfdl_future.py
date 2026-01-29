@@ -1,3 +1,4 @@
+
 import asyncio
 import websockets
 import json
@@ -17,8 +18,14 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 WSS_URL = "wss://nimblewebstream.lisuns.com:4576/"
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
-# .NFO suffix is mandatory for some GDFL API tiers
-SYMBOLS_TO_MONITOR = ["SBIN-I.NFO", "HDFCBANK-I.NFO", "ICICIBANK-I.NFO", "BANKNIFTY-I.NFO"]
+# Correct GDFL NFO Continuous Format
+SYMBOLS_TO_MONITOR = [
+    "SBIN-I.NFO", 
+    "HDFCBANK-I.NFO", 
+    "ICICIBANK-I.NFO", 
+    "BANKNIFTY-I.NFO"
+]
+
 LOT_SIZES = {"BANKNIFTY": 30, "HDFCBANK": 550, "ICICIBANK": 700, "SBIN": 750}
 
 # ============================== STATE & UTILITIES =============================
@@ -46,23 +53,25 @@ async def process_data(data):
 
     state = symbol_data_state[symbol]
     
+    # Initialize state
     if state["oi"] == 0:
         state["price"], state["oi"] = new_price, new_oi
-        print(f"🟢 [{get_now()}] {symbol}: Initialized (P: {new_price}, OI: {new_oi})", flush=True)
+        print(f"🟢 [{get_now()}] {symbol}: Active (P: {new_price}, OI: {new_oi})", flush=True)
         return
 
     oi_chg = new_oi - state["oi"]
     if abs(oi_chg) > 0: 
-        symbol_key = symbol.replace("-I.NFO", "")
+        # Extract underlying name from the symbol for lot size lookup
+        symbol_key = symbol.split("-")[0]
         lot_size = LOT_SIZES.get(symbol_key, 75)
         lots = int(abs(oi_chg) / lot_size)
         
-        # Reduced to 1 lot for testing; increase to 50 for production
-        if lots >= 1:
+        # Production threshold: 50 lots
+        if lots >= 50:
             direction = "🔺" if new_price > state["price"] else "🔻"
             msg = f"🔔 *ALERT: {symbol}* {direction}\nOI Change: {oi_chg} ({lots} lots)\nPrice: {new_price}\nTime: {get_now()}"
             await send_telegram(msg)
-            print(f"🚀 Alert: {symbol} movement of {lots} lots detected.", flush=True)
+            print(f"🚀 Alert sent for {symbol}", flush=True)
 
     state["price"], state["oi"] = new_price, new_oi
 
@@ -74,8 +83,9 @@ async def run_scanner():
 
     while True:
         try:
-            print(f"🔄 [{get_now()}] Connecting...", flush=True)
+            print(f"🔄 [{get_now()}] Connecting to GDFL...", flush=True)
             async with websockets.connect(WSS_URL, ssl=ssl_context, ping_interval=20, ping_timeout=20) as ws:
+                # 1. Authenticate
                 await ws.send(json.dumps({"MessageType": "Authenticate", "Password": API_KEY}))
                 auth_resp = json.loads(await ws.recv())
                 
@@ -84,19 +94,19 @@ async def run_scanner():
                     await asyncio.sleep(60)
                     continue
 
-                print(f"✅ [{get_now()}] Auth Success. Subscribing...", flush=True)
-                for s in SYMBOLS_TO_MONITOR:
-                    await ws.send(json.dumps({"MessageType": "SubscribeRealtime", "Exchange": "NFO", "InstrumentIdentifier": s}))
+                print(f"✅ [{get_now()}] Auth Success. Subscribing to {SYMBOLS_TO_MONITOR}...", flush=True)
                 
-                await send_telegram("✅ GFDL Scanner is ACTIVE on Railway.")
+                # 2. Subscribe
+                for s in SYMBOLS_TO_MONITOR:
+                    await ws.send(json.dumps({
+                        "MessageType": "SubscribeRealtime", 
+                        "Exchange": "NFO", 
+                        "InstrumentIdentifier": s
+                    }))
+                
+                await send_telegram("✅ GFDL Scanner is ACTIVE and waiting for data.")
 
-                last_heartbeat = datetime.now()
                 async for message in ws:
-                    # Connection Heartbeat every 5 mins
-                    if (datetime.now() - last_heartbeat).seconds > 300:
-                        print(f"💓 [{get_now()}] Heartbeat: Connection healthy.", flush=True)
-                        last_heartbeat = datetime.now()
-
                     data = json.loads(message)
                     if data.get("MessageType") == "RealtimeResult":
                         await process_data(data)
