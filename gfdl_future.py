@@ -62,7 +62,7 @@ async def process_data(data):
         lots = int(abs(oi_chg) / lot_size)
         
         # Production threshold (e.g., 50 lots)
-        if lots >= 50:
+        if lots >= 25:
             direction = "🔺" if new_price > state["price"] else "🔻"
             msg = f"🔔 *ALERT: {symbol}* {direction}\nOI Change: {oi_chg} ({lots} lots)\nPrice: {new_price}\nTime: {get_now()}"
             await send_telegram(msg)
