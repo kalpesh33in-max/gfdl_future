@@ -14,14 +14,10 @@ API_KEY = os.environ.get("API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-if not all([API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
-    print("❌ Error: Missing Railway environment variables.", flush=True)
-    sys.exit(1)
-
 WSS_URL = "wss://nimblewebstream.lisuns.com:4576/"
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
-# Using Continuous Symbols with the required .NFO suffix
+# .NFO suffix is mandatory for some GDFL API tiers
 SYMBOLS_TO_MONITOR = ["SBIN-I.NFO", "HDFCBANK-I.NFO", "ICICIBANK-I.NFO", "BANKNIFTY-I.NFO"]
 LOT_SIZES = {"BANKNIFTY": 30, "HDFCBANK": 550, "ICICIBANK": 700, "SBIN": 750}
 
@@ -37,7 +33,7 @@ async def send_telegram(msg: str):
     try:
         await loop.run_in_executor(None, functools.partial(requests.post, TELEGRAM_API_URL, params=params, timeout=10))
     except Exception as e:
-        print(f"⚠️ Telegram Log: {e}", flush=True)
+        print(f"⚠️ Telegram Error: {e}", flush=True)
 
 # =============================== CORE LOGIC ===================================
 async def process_data(data):
@@ -57,14 +53,16 @@ async def process_data(data):
 
     oi_chg = new_oi - state["oi"]
     if abs(oi_chg) > 0: 
-        lot_size = next((v for k, v in LOT_SIZES.items() if k in symbol), 75)
+        symbol_key = symbol.replace("-I.NFO", "")
+        lot_size = LOT_SIZES.get(symbol_key, 75)
         lots = int(abs(oi_chg) / lot_size)
         
-        if lots >= 50:
+        # Reduced to 1 lot for testing; increase to 50 for production
+        if lots >= 1:
             direction = "🔺" if new_price > state["price"] else "🔻"
             msg = f"🔔 *ALERT: {symbol}* {direction}\nOI Change: {oi_chg} ({lots} lots)\nPrice: {new_price}\nTime: {get_now()}"
             await send_telegram(msg)
-            print(f"🚀 Alert: {symbol} OI change detected.", flush=True)
+            print(f"🚀 Alert: {symbol} movement of {lots} lots detected.", flush=True)
 
     state["price"], state["oi"] = new_price, new_oi
 
@@ -76,7 +74,7 @@ async def run_scanner():
 
     while True:
         try:
-            print(f"🔄 [{get_now()}] Connecting to {WSS_URL}...", flush=True)
+            print(f"🔄 [{get_now()}] Connecting...", flush=True)
             async with websockets.connect(WSS_URL, ssl=ssl_context, ping_interval=20, ping_timeout=20) as ws:
                 await ws.send(json.dumps({"MessageType": "Authenticate", "Password": API_KEY}))
                 auth_resp = json.loads(await ws.recv())
@@ -86,17 +84,19 @@ async def run_scanner():
                     await asyncio.sleep(60)
                     continue
 
-                print(f"✅ [{get_now()}] Auth Success. Subscribing with .NFO suffixes...", flush=True)
+                print(f"✅ [{get_now()}] Auth Success. Subscribing...", flush=True)
                 for s in SYMBOLS_TO_MONITOR:
-                    await ws.send(json.dumps({
-                        "MessageType": "SubscribeRealtime", 
-                        "Exchange": "NFO", 
-                        "InstrumentIdentifier": s
-                    }))
+                    await ws.send(json.dumps({"MessageType": "SubscribeRealtime", "Exchange": "NFO", "InstrumentIdentifier": s}))
                 
                 await send_telegram("✅ GFDL Scanner is ACTIVE on Railway.")
 
+                last_heartbeat = datetime.now()
                 async for message in ws:
+                    # Connection Heartbeat every 5 mins
+                    if (datetime.now() - last_heartbeat).seconds > 300:
+                        print(f"💓 [{get_now()}] Heartbeat: Connection healthy.", flush=True)
+                        last_heartbeat = datetime.now()
+
                     data = json.loads(message)
                     if data.get("MessageType") == "RealtimeResult":
                         await process_data(data)
@@ -105,11 +105,5 @@ async def run_scanner():
             print(f"⚠️ Connection Error: {e}. Retrying in 30s...", flush=True)
             await asyncio.sleep(30)
 
-async def main():
-    try:
-        await run_scanner()
-    except Exception as e:
-        print(f"💥 Fatal Crash: {e}", flush=True)
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(run_scanner())
