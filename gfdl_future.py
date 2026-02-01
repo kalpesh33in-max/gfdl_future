@@ -65,7 +65,7 @@ async def process_data(client, data):
         lots = int(abs(oi_chg) / lot_size)
 
         # Alert condition based on lot size
-        if lots > 1:
+        if lots >= 50:
             try:
                 oi_roc = (oi_chg / state["oi"]) * 100
             except ZeroDivisionError:
@@ -79,7 +79,7 @@ OI RoC: {oi_roc:.2f}%
 Price: {new_price}
 Time: {get_now()}""")
             await send_telegram(client, msg)
-            print(f"🚀 Alert: {symbol} Lot size > 1 detected.", flush=True)
+            print(f"🚀 Alert: {symbol} Lot size >= 50 detected.", flush=True)
 
     # Update the state for the next tick
     state["price"], state["oi"] = new_price, new_oi
