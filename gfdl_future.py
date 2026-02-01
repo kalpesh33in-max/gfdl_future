@@ -21,6 +21,7 @@ TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessag
 
 # Using Continuous Format with .NFO suffix as required
 SYMBOLS_TO_MONITOR = ["AXISBANK-I.NFO", "KOTAKBANK-I.NFO", "RELIANCE-I.NFO"]
+LOT_SIZES = {"AXISBANK": 625, "KOTAKBANK": 2000, "RELIANCE": 500}
 
 
 # ============================== STATE & UTILITIES =============================
@@ -61,17 +62,22 @@ async def process_data(data):
         except ZeroDivisionError:
             oi_roc = 0.0
 
-        # New alert condition based on absolute OI RoC
-        if abs(oi_roc) >= 2.0:
+        # Alert condition based on absolute OI RoC
+        if abs(oi_roc) >= 1.0:
+            # Calculate lots for informational purposes
+            base_symbol = symbol.split("-")[0]
+            lot_size = LOT_SIZES.get(base_symbol, 75)
+            lots = int(abs(oi_chg) / lot_size)
+
             direction = "🔺" if new_price > state["price"] else "🔻"
             msg = (f"🔔 *ALERT: {symbol}* {direction}\n"
                    f"Existing OI: {state['oi']}\n"
-                   f"OI Change: {oi_chg}\n"
+                   f"OI Change: {oi_chg} ({lots} lots)\n"
                    f"OI RoC: {oi_roc:.2f}%\n"
                    f"Price: {new_price}\n"
                    f"Time: {get_now()}")
             await send_telegram(msg)
-            print(f"🚀 Alert: {symbol} OI RoC >= 2.0% detected.", flush=True)
+            print(f"🚀 Alert: {symbol} OI RoC >= 1.0% detected.", flush=True)
 
     state["price"], state["oi"] = new_price, new_oi
 
