@@ -51,24 +51,24 @@ async def process_data(data):
     state = symbol_data_state[symbol]
     
     # Initialize state upon first data arrival
-    if state["oi"] != 0:
+    if state["oi"] == 0:
         state["price"], state["oi"] = new_price, new_oi
         print(f"🟢 [{get_now()}] {symbol}: First Data Received (P: {new_price}, OI: {new_oi})", flush=True)
         return
 
     oi_chg = new_oi - state["oi"]
     if abs(oi_chg) > 0: 
-        try:
-            oi_roc = (oi_chg / state["oi"]) * 100
-        except ZeroDivisionError:
-            oi_roc = 0.0
+        # Calculate lots first to use as the trigger
+        base_symbol = symbol.split("-")[0]
+        lot_size = LOT_SIZES.get(base_symbol, 75)
+        lots = int(abs(oi_chg) / lot_size)
 
-        # Alert condition based on absolute OI RoC
-        if abs(oi_roc) >= 1.0:
-            # Calculate lots for informational purposes
-            base_symbol = symbol.split("-")[0]
-            lot_size = LOT_SIZES.get(base_symbol, 75)
-            lots = int(abs(oi_chg) / lot_size)
+        # New alert condition based on lot size
+        if lots > 1:
+            try:
+                oi_roc = (oi_chg / state["oi"]) * 100
+            except ZeroDivisionError:
+                oi_roc = 0.0
 
             direction = "🔺" if new_price > state["price"] else "🔻"
             msg = (f"🔔 *ALERT: {symbol}* {direction}\n"
@@ -78,7 +78,7 @@ async def process_data(data):
                    f"Price: {new_price}\n"
                    f"Time: {get_now()}")
             await send_telegram(msg)
-            print(f"🚀 Alert: {symbol} OI RoC >= 1.0% detected.", flush=True)
+            print(f"🚀 Alert: {symbol} Lot size > 1 detected.", flush=True)
 
     state["price"], state["oi"] = new_price, new_oi
 
