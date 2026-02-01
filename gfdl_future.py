@@ -20,8 +20,13 @@ WSS_URL = "wss://nimblewebstream.lisuns.com:4576/"
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
 # Using Continuous Format with .NFO suffix as required
-SYMBOLS_TO_MONITOR = ["AXISBANK-I", "KOTAKBANK-I", "RELIANCE-I"]
-LOT_SIZES = {"AXISBANK": 625, "KOTAKBANK": 2000, "RELIANCE": 500}
+SYMBOLS_TO_MONITOR = ["BANKNIFTY-I.NFO", "HDFCBANK-I.NFO", "ICICIBANK-I.NFO", "SBIN-I.NFO"]
+LOT_SIZES = {
+    "BANKNIFTY": 30,
+    "HDFCBANK": 550,
+    "ICICIBANK": 700,
+    "SBIN": 750,
+}
 
 
 # ============================== STATE & UTILITIES =============================
