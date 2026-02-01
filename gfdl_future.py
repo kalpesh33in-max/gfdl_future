@@ -1,10 +1,7 @@
-
-
 import asyncio
 import websockets
 import json
-import requests
-import functools
+import aiohttp
 import os
 import sys
 import ssl
@@ -20,9 +17,8 @@ WSS_URL = "wss://nimblewebstream.lisuns.com:4576/"
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
 # Using Continuous Format with .NFO suffix as required
-SYMBOLS_TO_MONITOR = ["AXISBANK-I", "KOTAKBANK-I", "RELIANCE-I"]
+SYMBOLS_TO_MONITOR = ["AXISBANK-I.NFO", "KOTAKBANK-I.NFO", "RELIANCE-I.NFO"]
 LOT_SIZES = {"AXISBANK": 625, "KOTAKBANK": 2000, "RELIANCE": 500}
-
 
 # ============================== STATE & UTILITIES =============================
 symbol_data_state = {s: {"price": 0, "oi": 0} for s in SYMBOLS_TO_MONITOR}
@@ -30,19 +26,21 @@ symbol_data_state = {s: {"price": 0, "oi": 0} for s in SYMBOLS_TO_MONITOR}
 def get_now():
     return datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%H:%M:%S")
 
-async def send_telegram(msg: str):
-    print(f"  -> Attempting to send Telegram message...", flush=True)
-    loop = asyncio.get_running_loop()
+async def send_telegram(session, msg: str):
     params = {'chat_id': TELEGRAM_CHAT_ID, 'text': msg, 'parse_mode': 'Markdown'}
     try:
-        await loop.run_in_executor(None, functools.partial(requests.post, TELEGRAM_API_URL, params=params, timeout=10))
-        print(f"  -> Telegram message request sent successfully.", flush=True)
+        async with session.post(TELEGRAM_API_URL, params=params, timeout=10) as response:
+            if response.status != 200:
+                # Log error if Telegram API returns a non-200 status
+                response_text = await response.text()
+                print(f"⚠️ Telegram Error: Received status {response.status}. Response: {response_text}", flush=True)
+    except asyncio.TimeoutError:
+        print(f"⚠️ Telegram Log (Exception): Request timed out.", flush=True)
     except Exception as e:
         print(f"⚠️ Telegram Log (Exception): {e}", flush=True)
 
 # =============================== CORE LOGIC ===================================
-async def process_data(data):
-    print(data)
+async def process_data(session, data):
     symbol = data.get("InstrumentIdentifier")
     new_price = data.get("LastTradePrice")
     new_oi = data.get("OpenInterest")
@@ -63,7 +61,7 @@ async def process_data(data):
     if abs(oi_chg) > 0: 
         # Calculate lots first to use as the trigger
         base_symbol = symbol.split("-")[0]
-        lot_size = LOT_SIZES.get(base_symbol, 75) # Default lot size if not found
+        lot_size = LOT_SIZES.get(base_symbol, 75)
         lots = int(abs(oi_chg) / lot_size)
 
         # Alert condition based on lot size
@@ -80,13 +78,11 @@ async def process_data(data):
                    f"OI RoC: {oi_roc:.2f}%\n"
                    f"Price: {new_price}\n"
                    f"Time: {get_now()}")
-            await send_telegram(msg)
+            await send_telegram(session, msg)
             print(f"🚀 Alert: {symbol} Lot size > 1 detected.", flush=True)
 
     # Update the state for the next tick
     state["price"], state["oi"] = new_price, new_oi
-
-# ... (rest of the script)
 
 # ============================ MAIN SCANNER LOOP ===============================
 async def run_scanner():
@@ -94,33 +90,34 @@ async def run_scanner():
     ssl_context.check_hostname = False
     ssl_context.verify_mode = ssl.CERT_NONE
 
-    while True:
-        try:
-            print(f"🔄 [{get_now()}] Connecting...", flush=True)
-            async with websockets.connect(WSS_URL, ssl=ssl_context, ping_interval=20, ping_timeout=20) as ws:
-                # Authenticate
-                await ws.send(json.dumps({"MessageType": "Authenticate", "Password": API_KEY}))
-                auth_resp = json.loads(await ws.recv())
-                
-                if not auth_resp.get("Complete"):
-                    print(f"❌ Auth Failed: {auth_resp.get('Comment')}", flush=True)
-                    await asyncio.sleep(60)
-                    continue
+    async with aiohttp.ClientSession() as session:
+        while True:
+            try:
+                print(f"🔄 [{get_now()}] Connecting...", flush=True)
+                async with websockets.connect(WSS_URL, ssl=ssl_context, ping_interval=20, ping_timeout=20) as ws:
+                    # Authenticate
+                    await ws.send(json.dumps({"MessageType": "Authenticate", "Password": API_KEY}))
+                    auth_resp = json.loads(await ws.recv())
+                    
+                    if not auth_resp.get("Complete"):
+                        print(f"❌ Auth Failed: {auth_resp.get('Comment')}", flush=True)
+                        await asyncio.sleep(60)
+                        continue
 
-                print(f"✅ [{get_now()}] Auth Success. Subscribing to {SYMBOLS_TO_MONITOR}...", flush=True)
-                for s in SYMBOLS_TO_MONITOR:
-                    await ws.send(json.dumps({"MessageType": "SubscribeRealtime", "Exchange": "NFO", "InstrumentIdentifier": s}))
-                
-                await send_telegram("✅ GFDL Scanner is ACTIVE and waiting for first trades.")
+                    print(f"✅ [{get_now()}] Auth Success. Subscribing to {SYMBOLS_TO_MONITOR}...", flush=True)
+                    for s in SYMBOLS_TO_MONITOR:
+                        await ws.send(json.dumps({"MessageType": "SubscribeRealtime", "Exchange": "NFO", "InstrumentIdentifier": s}))
+                    
+                    await send_telegram(session, "✅ GFDL Scanner is ACTIVE and waiting for first trades.")
 
-                async for message in ws:
-                    data = json.loads(message)
-                    if data.get("MessageType") == "RealtimeResult":
-                        await process_data(data)
+                    async for message in ws:
+                        data = json.loads(message)
+                        if data.get("MessageType") == "RealtimeResult":
+                            await process_data(session, data)
 
-        except Exception as e:
-            print(f"⚠️ Connection Error: {e}. Retrying in 30s...", flush=True)
-            await asyncio.sleep(30)
+            except Exception as e:
+                print(f"⚠️ Connection Error: {e}. Retrying in 30s...", flush=True)
+                await asyncio.sleep(30)
 
 if __name__ == "__main__":
     asyncio.run(run_scanner())
