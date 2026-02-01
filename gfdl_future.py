@@ -1,4 +1,5 @@
 
+
 import asyncio
 import websockets
 import json
@@ -19,8 +20,9 @@ WSS_URL = "wss://nimblewebstream.lisuns.com:4576/"
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
 # Using Continuous Format with .NFO suffix as required
-SYMBOLS_TO_MONITOR = ["AXISBANK-I.NFO", "KOTAKBANK-I.NFO", "RELIANCE-I.NFO"]
+SYMBOLS_TO_MONITOR = ["AXISBANK-I", "KOTAKBANK-I", "RELIANCE-I"]
 LOT_SIZES = {"AXISBANK": 625, "KOTAKBANK": 2000, "RELIANCE": 500}
+
 
 # ============================== STATE & UTILITIES =============================
 symbol_data_state = {s: {"price": 0, "oi": 0} for s in SYMBOLS_TO_MONITOR}
@@ -29,14 +31,12 @@ def get_now():
     return datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%H:%M:%S")
 
 async def send_telegram(msg: str):
-    print(f"  -> Attempting to send Telegram message...", flush=True)
     loop = asyncio.get_running_loop()
     params = {'chat_id': TELEGRAM_CHAT_ID, 'text': msg, 'parse_mode': 'Markdown'}
     try:
         await loop.run_in_executor(None, functools.partial(requests.post, TELEGRAM_API_URL, params=params, timeout=10))
-        print(f"  -> Telegram message request sent successfully.", flush=True)
     except Exception as e:
-        print(f"⚠️ Telegram Log (Exception): {e}", flush=True)
+        print(f"⚠️ Telegram Log: {e}", flush=True)
 
 # =============================== CORE LOGIC ===================================
 async def process_data(data):
@@ -51,25 +51,24 @@ async def process_data(data):
     state = symbol_data_state[symbol]
     
     # Initialize state upon first data arrival
-    if state["oi"] == 0:
+    if state["oi"] != 0:
         state["price"], state["oi"] = new_price, new_oi
         print(f"🟢 [{get_now()}] {symbol}: First Data Received (P: {new_price}, OI: {new_oi})", flush=True)
         return
 
-    # Use state["price"] and state["oi"] as previous values before updating
     oi_chg = new_oi - state["oi"]
     if abs(oi_chg) > 0: 
-        # Calculate lots first to use as the trigger
-        base_symbol = symbol.split("-")[0]
-        lot_size = LOT_SIZES.get(base_symbol, 75)
-        lots = int(abs(oi_chg) / lot_size)
+        try:
+            oi_roc = (oi_chg / state["oi"]) * 100
+        except ZeroDivisionError:
+            oi_roc = 0.0
 
-        # Alert condition based on lot size
-        if lots > 1:
-            try:
-                oi_roc = (oi_chg / state["oi"]) * 100
-            except ZeroDivisionError:
-                oi_roc = 0.0
+        # Alert condition based on absolute OI RoC
+        if abs(oi_roc) >= 1.0:
+            # Calculate lots for informational purposes
+            base_symbol = symbol.split("-")[0]
+            lot_size = LOT_SIZES.get(base_symbol, 75)
+            lots = int(abs(oi_chg) / lot_size)
 
             direction = "🔺" if new_price > state["price"] else "🔻"
             msg = (f"🔔 *ALERT: {symbol}* {direction}\n"
@@ -79,9 +78,8 @@ async def process_data(data):
                    f"Price: {new_price}\n"
                    f"Time: {get_now()}")
             await send_telegram(msg)
-            print(f"🚀 Alert: {symbol} Lot size > 1 detected.", flush=True)
+            print(f"🚀 Alert: {symbol} OI RoC >= 1.0% detected.", flush=True)
 
-    # Update the state for the next tick
     state["price"], state["oi"] = new_price, new_oi
 
 # ============================ MAIN SCANNER LOOP ===============================
