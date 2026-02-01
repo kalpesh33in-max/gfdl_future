@@ -31,12 +31,14 @@ def get_now():
     return datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%H:%M:%S")
 
 async def send_telegram(msg: str):
+    print(f"  -> Attempting to send Telegram message...", flush=True)
     loop = asyncio.get_running_loop()
     params = {'chat_id': TELEGRAM_CHAT_ID, 'text': msg, 'parse_mode': 'Markdown'}
     try:
         await loop.run_in_executor(None, functools.partial(requests.post, TELEGRAM_API_URL, params=params, timeout=10))
+        print(f"  -> Telegram message request sent successfully.", flush=True)
     except Exception as e:
-        print(f"⚠️ Telegram Log: {e}", flush=True)
+        print(f"⚠️ Telegram Log (Exception): {e}", flush=True)
 
 # =============================== CORE LOGIC ===================================
 async def process_data(data):
