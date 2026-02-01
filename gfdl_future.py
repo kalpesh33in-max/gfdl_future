@@ -72,17 +72,12 @@ async def process_data(client, data):
                 oi_roc = 0.0
 
             direction = "🔺" if new_price > state["price"] else "🔻"
-            msg = (f"🔔 *ALERT: {symbol}* {direction}
-"
-                   f"Existing OI: {state['oi']}
-"
-                   f"OI Change: {oi_chg} ({lots} lots)
-"
-                   f"OI RoC: {oi_roc:.2f}%
-"
-                   f"Price: {new_price}
-"
-                   f"Time: {get_now()}")
+            msg = (f"""🔔 *ALERT: {symbol}* {direction}
+Existing OI: {state['oi']}
+OI Change: {oi_chg} ({lots} lots)
+OI RoC: {oi_roc:.2f}%
+Price: {new_price}
+Time: {get_now()}""")
             await send_telegram(client, msg)
             print(f"🚀 Alert: {symbol} Lot size > 1 detected.", flush=True)
 
