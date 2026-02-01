@@ -40,6 +40,7 @@ async def send_telegram(msg: str):
 
 # =============================== CORE LOGIC ===================================
 async def process_data(data):
+    print(data)
     symbol = data.get("InstrumentIdentifier")
     new_price = data.get("LastTradePrice")
     new_oi = data.get("OpenInterest")
