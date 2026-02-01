@@ -60,7 +60,7 @@ async def process_data(data):
     oi_chg = new_oi - state["oi"]
     if abs(oi_chg) > 0: 
         # Calculate lots first to use as the trigger
-        base_symbol = symbol.split("-")[0]
+        base_symbol = symbol.split("-")[0].upper() # Ensure uppercase for dictionary lookup
         lot_size = LOT_SIZES.get(base_symbol, 75) # Default lot size if not found
         lots = int(abs(oi_chg) / lot_size)
 
