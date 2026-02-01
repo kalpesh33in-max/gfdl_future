@@ -51,7 +51,7 @@ async def process_data(data):
     state = symbol_data_state[symbol]
     
     # Initialize state upon first data arrival
-    if state["oi"] != 0:
+    if state["oi"] == 0:
         state["price"], state["oi"] = new_price, new_oi
         print(f"🟢 [{get_now()}] {symbol}: First Data Received (P: {new_price}, OI: {new_oi})", flush=True)
         return
