@@ -158,22 +158,15 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
         else:
             data[sym][act]["TOTAL"] += t
 
-    message = "<pre>
-💰 2 MIN TURNOVER FLOW
-
-"
+    message = "<pre>\n💰 2 MIN TURNOVER FLOW\n\n"
     for symbol in TRACK_SYMBOLS:
         if symbol not in data: continue
 
         f_price = last_known_future.get(symbol, "N/A")
-        message += f"{symbol} (FUT: {f_price})
-"
-        message += "-" * 56 + "
-"
-        message += f"{'TYPE':14}{'ITM':>10}{'ATM':>10}{'OTM':>10}{'TOT':>10}
-"
-        message += "-" * 56 + "
-"
+        message += f"{symbol} (FUT: {f_price})\n"
+        message += "-" * 56 + "\n"
+        message += f"{'TYPE':14}{'ITM':>10}{'ATM':>10}{'OTM':>10}{'TOT':>10}\n"
+        message += "-" * 56 + "\n"
 
         actions = ["CALL_WRITER", "PUT_WRITER", "CALL_BUY", "PUT_BUY", "CALL_SC", "PUT_SC", "CALL_UNW", "PUT_UNW"]
         for action in actions:
@@ -183,28 +176,20 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
             total = format_indian_value(data[symbol][action]["ITM"] + data[symbol][action]["ATM"] + data[symbol][action]["OTM"])
             
             label = action.replace("_", " ")
-            message += f"{label:14}{itm:>10}{atm:>10}{otm:>10}{total:>10}
-"
+            message += f"{label:14}{itm:>10}{atm:>10}{otm:>10}{total:>10}\n"
 
         fb = format_indian_value(data[symbol]["FUTURE_BUY"]["TOTAL"])
         fs = format_indian_value(data[symbol]["FUTURE_SELL"]["TOTAL"])
         fsc = format_indian_value(data[symbol]["FUTURE_SC"]["TOTAL"])
         funw = format_indian_value(data[symbol]["FUTURE_UNW"]["TOTAL"])
 
-        message += "-" * 56 + "
-"
-        message += f"{'FUT BUY':14}{fb:>10}
-"
-        message += f"{'FUT SELL':14}{fs:>10}
-"
-        message += f"{'FUT SC':14}{fsc:>10}
-"
-        message += f"{'FUT UNW':14}{funw:>10}
+        message += "-" * 56 + "\n"
+        message += f"{'FUT BUY':14}{fb:>10}\n"
+        message += f"{'FUT SELL':14}{fs:>10}\n"
+        message += f"{'FUT SC':14}{fsc:>10}\n"
+        message += f"{'FUT UNW':14}{funw:>10}\n\n"
 
-"
-
-    message += "Validity: Next 2 Minutes Only
-</pre>"
+    message += "Validity: Next 2 Minutes Only\n</pre>"
     await context.bot.send_message(chat_id=SUMMARY_CHAT_ID, text=message, parse_mode="HTML")
 
 def main():
