@@ -1,1 +1,1 @@
-worker: python gfdl_future.py
+worker: python turnover_flow_scanner.py
