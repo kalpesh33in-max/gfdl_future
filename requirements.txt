@@ -1,2 +1,1 @@
-websockets
-httpx
+python-telegram-bot[job-queue]==21.7
