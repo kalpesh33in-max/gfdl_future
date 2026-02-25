@@ -34,7 +34,7 @@ def format_indian_value(val):
         return f"{val:,.0f}"
 
 # ===============================
-# STRICT & SAFE ITM LOGIC
+# 🔄 REVERSED ITM LOGIC
 # ===============================
 def classify_strike(strike, option_type, future_price):
 
@@ -44,13 +44,15 @@ def classify_strike(strike, option_type, future_price):
     except:
         return None
 
+    # 🔄 Reversed Logic (Testing)
     if option_type == "CE":
-        return "ITM" if strike < future_price else "OTM"
-
-    if option_type == "PE":
         return "ITM" if strike > future_price else "OTM"
 
+    if option_type == "PE":
+        return "ITM" if strike < future_price else "OTM"
+
     return None
+
 
 # ===============================
 # PARSE ALERT
@@ -212,7 +214,6 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
         message += f"{'FUT SC':14}{format_indian_value(fsc):>12}\n"
         message += f"{'FUT UNW':14}{format_indian_value(funw):>12}\n\n"
 
-        # Bullish Money
         bull = (
             data[symbol]["PUT_WRITER"]["ITM"] + data[symbol]["PUT_WRITER"]["OTM"] +
             data[symbol]["CALL_BUY"]["ITM"] + data[symbol]["CALL_BUY"]["OTM"] +
@@ -221,7 +222,6 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
             fb + fsc
         )
 
-        # Bearish Money
         bear = (
             data[symbol]["CALL_WRITER"]["ITM"] + data[symbol]["CALL_WRITER"]["OTM"] +
             data[symbol]["PUT_BUY"]["ITM"] + data[symbol]["PUT_BUY"]["OTM"] +
