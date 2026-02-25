@@ -22,7 +22,7 @@ alerts_buffer = []
 TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK"]
 
 # ===============================
-# INDIAN FORMAT
+# INDIAN NUMBER FORMAT
 # ===============================
 def format_indian_value(val):
     abs_val = abs(val)
@@ -34,9 +34,15 @@ def format_indian_value(val):
         return f"{val:,.0f}"
 
 # ===============================
-# STRICT ITM / OTM CLASSIFICATION
+# STRICT & SAFE ITM LOGIC
 # ===============================
 def classify_strike(strike, option_type, future_price):
+
+    try:
+        strike = int(float(strike))
+        future_price = int(float(future_price))
+    except:
+        return None
 
     if option_type == "CE":
         return "ITM" if strike < future_price else "OTM"
@@ -75,18 +81,20 @@ def parse_alert(text):
         return None
 
     opt_match = re.search(r"(\d+)(CE|PE)", symbol_full)
+
     turnover = 0
     zone = None
     option_type = None
 
     if opt_match:
-        strike = int(opt_match.group(1))
+        strike = opt_match.group(1)
         option_type = opt_match.group(2)
         turnover = oi_qty * price
+
         if future_price:
             zone = classify_strike(strike, option_type, future_price)
     else:
-        turnover = lots * 100000
+        turnover = lots * 100000  # Futures turnover
 
     action_type = None
 
@@ -122,7 +130,9 @@ def parse_alert(text):
 # TELEGRAM HANDLER
 # ===============================
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     msg = update.channel_post or update.message
+
     if msg and msg.text and str(msg.chat_id) == str(TARGET_CHANNEL_ID):
         parsed = parse_alert(msg.text)
         if parsed:
@@ -259,9 +269,6 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
     )
 
-# ===============================
-# MAIN
-# ===============================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
