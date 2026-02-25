@@ -5,6 +5,9 @@ from collections import defaultdict
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
+# ===============================
+# LOGGING
+# ===============================
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -18,9 +21,9 @@ alerts_buffer = []
 
 TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK"]
 
-# -----------------------------
-# FORMAT INDIAN VALUE
-# -----------------------------
+# ===============================
+# INDIAN FORMAT
+# ===============================
 def format_indian_value(val):
     abs_val = abs(val)
     if abs_val >= 10000000:
@@ -30,34 +33,22 @@ def format_indian_value(val):
     else:
         return f"{val:,.0f}"
 
-# -----------------------------
-# STRIKE CLASSIFICATION
-# -----------------------------
-def classify_strike(symbol, strike, option_type, future_price):
+# ===============================
+# STRICT ITM / OTM CLASSIFICATION
+# ===============================
+def classify_strike(strike, option_type, future_price):
 
-    # Intrinsic ITM logic
-    is_itm = False
     if option_type == "CE":
-        is_itm = strike < future_price
-    elif option_type == "PE":
-        is_itm = strike > future_price
+        return "ITM" if strike < future_price else "OTM"
 
-    if not is_itm:
-        return "OTM"
+    if option_type == "PE":
+        return "ITM" if strike > future_price else "OTM"
 
-    # BANKNIFTY deep/near logic
-    if symbol == "BANKNIFTY":
-        distance = abs(strike - future_price)
-        if distance <= 300:
-            return "ITM_NEAR"
-        else:
-            return "ITM_DEEP"
+    return None
 
-    return "ITM_NEAR"
-
-# -----------------------------
+# ===============================
 # PARSE ALERT
-# -----------------------------
+# ===============================
 def parse_alert(text):
 
     text_upper = text.upper()
@@ -86,25 +77,33 @@ def parse_alert(text):
     opt_match = re.search(r"(\d+)(CE|PE)", symbol_full)
     turnover = 0
     zone = None
+    option_type = None
 
     if opt_match:
         strike = int(opt_match.group(1))
         option_type = opt_match.group(2)
         turnover = oi_qty * price
         if future_price:
-            zone = classify_strike(base_symbol, strike, option_type, future_price)
+            zone = classify_strike(strike, option_type, future_price)
     else:
         turnover = lots * 100000
 
     action_type = None
+
     if "CALL WRITER" in text_upper: action_type = "CALL_WRITER"
     elif "PUT WRITER" in text_upper: action_type = "PUT_WRITER"
     elif "CALL BUY" in text_upper: action_type = "CALL_BUY"
     elif "PUT BUY" in text_upper: action_type = "PUT_BUY"
     elif "SHORT COVERING" in text_upper:
-        action_type = "CALL_SC" if opt_match and option_type == "CE" else "PUT_SC" if opt_match else "FUTURE_SC"
+        if opt_match:
+            action_type = "CALL_SC" if option_type == "CE" else "PUT_SC"
+        else:
+            action_type = "FUTURE_SC"
     elif "LONG UNWINDING" in text_upper:
-        action_type = "CALL_UNW" if opt_match and option_type == "CE" else "PUT_UNW" if opt_match else "FUTURE_UNW"
+        if opt_match:
+            action_type = "CALL_UNW" if option_type == "CE" else "PUT_UNW"
+        else:
+            action_type = "FUTURE_UNW"
     elif "FUTURE BUY" in text_upper: action_type = "FUTURE_BUY"
     elif "FUTURE SELL" in text_upper: action_type = "FUTURE_SELL"
 
@@ -119,9 +118,9 @@ def parse_alert(text):
         "future": future_price
     }
 
-# -----------------------------
+# ===============================
 # TELEGRAM HANDLER
-# -----------------------------
+# ===============================
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.channel_post or update.message
     if msg and msg.text and str(msg.chat_id) == str(TARGET_CHANNEL_ID):
@@ -129,11 +128,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if parsed:
             alerts_buffer.append(parsed)
 
-# -----------------------------
-# SUMMARY
-# -----------------------------
+# ===============================
+# SUMMARY PROCESS
+# ===============================
 async def process_summary(context: ContextTypes.DEFAULT_TYPE):
+
     global alerts_buffer
+
     if not alerts_buffer:
         return
 
@@ -144,7 +145,11 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
     futures_data = defaultdict(lambda: defaultdict(float))
     last_future = {}
 
+    total_bull = 0
+    total_bear = 0
+
     for alert in batch:
+
         sym = alert["symbol"]
         act = alert["action_type"]
         zone = alert["zone"]
@@ -161,30 +166,102 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
     message = "<pre>\n💰 2 MIN TURNOVER FLOW\n\n"
 
     for symbol in TRACK_SYMBOLS:
+
         if symbol not in data and symbol not in futures_data:
             continue
 
         message += f"{symbol} (FUT: {last_future.get(symbol,'N/A')})\n"
-        message += "-" * 65 + "\n"
-        message += f"{'TYPE':14}{'ITM_NEAR':>12}{'ITM_DEEP':>12}{'OTM':>12}{'TOT':>12}\n"
-        message += "-" * 65 + "\n"
+        message += "-" * 60 + "\n"
+        message += f"{'TYPE':14}{'ITM':>12}{'OTM':>12}{'TOT':>12}\n"
+        message += "-" * 60 + "\n"
 
-        actions = ["CALL_WRITER","PUT_WRITER","CALL_BUY","PUT_BUY"]
+        actions = [
+            "CALL_WRITER","PUT_WRITER",
+            "CALL_BUY","PUT_BUY",
+            "CALL_SC","PUT_SC",
+            "CALL_UNW","PUT_UNW"
+        ]
 
         for action in actions:
-            near = data[symbol][action]["ITM_NEAR"]
-            deep = data[symbol][action]["ITM_DEEP"]
+
+            itm = data[symbol][action]["ITM"]
             otm = data[symbol][action]["OTM"]
-            total = near + deep + otm
+            total = itm + otm
 
-            message += f"{action.replace('_',' '):14}{format_indian_value(near):>12}{format_indian_value(deep):>12}{format_indian_value(otm):>12}{format_indian_value(total):>12}\n"
+            message += f"{action.replace('_',' '):14}{format_indian_value(itm):>12}{format_indian_value(otm):>12}{format_indian_value(total):>12}\n"
 
-        message += "\n"
+        message += "-" * 60 + "\n"
 
-    message += "Validity: Next 2 Minutes Only\n</pre>"
+        fb = futures_data[symbol]["FUTURE_BUY"]
+        fs = futures_data[symbol]["FUTURE_SELL"]
+        fsc = futures_data[symbol]["FUTURE_SC"]
+        funw = futures_data[symbol]["FUTURE_UNW"]
 
-    await context.bot.send_message(chat_id=SUMMARY_CHAT_ID, text=message, parse_mode="HTML")
+        message += f"{'FUT BUY':14}{format_indian_value(fb):>12}\n"
+        message += f"{'FUT SELL':14}{format_indian_value(fs):>12}\n"
+        message += f"{'FUT SC':14}{format_indian_value(fsc):>12}\n"
+        message += f"{'FUT UNW':14}{format_indian_value(funw):>12}\n\n"
 
+        # Bullish Money
+        bull = (
+            data[symbol]["PUT_WRITER"]["ITM"] + data[symbol]["PUT_WRITER"]["OTM"] +
+            data[symbol]["CALL_BUY"]["ITM"] + data[symbol]["CALL_BUY"]["OTM"] +
+            data[symbol]["CALL_SC"]["ITM"] + data[symbol]["CALL_SC"]["OTM"] +
+            data[symbol]["PUT_UNW"]["ITM"] + data[symbol]["PUT_UNW"]["OTM"] +
+            fb + fsc
+        )
+
+        # Bearish Money
+        bear = (
+            data[symbol]["CALL_WRITER"]["ITM"] + data[symbol]["CALL_WRITER"]["OTM"] +
+            data[symbol]["PUT_BUY"]["ITM"] + data[symbol]["PUT_BUY"]["OTM"] +
+            data[symbol]["PUT_SC"]["ITM"] + data[symbol]["PUT_SC"]["OTM"] +
+            data[symbol]["CALL_UNW"]["ITM"] + data[symbol]["CALL_UNW"]["OTM"] +
+            fs + funw
+        )
+
+        total_bull += bull
+        total_bear += bear
+
+    net_money = total_bull - total_bear
+    total_flow = total_bull + total_bear
+    dominance = (total_bull / total_flow * 100) if total_flow > 0 else 0
+
+    if net_money > 50000000:
+        strength = "🔥 VERY STRONG BULLISH"
+    elif net_money > 10000000:
+        strength = "🚀 STRONG BULLISH"
+    elif net_money > 0:
+        strength = "🟢 Mild Bullish"
+    elif net_money < -50000000:
+        strength = "🔥 VERY STRONG BEARISH"
+    elif net_money < -10000000:
+        strength = "📉 STRONG BEARISH"
+    elif net_money < 0:
+        strength = "🔴 Mild Bearish"
+    else:
+        strength = "⚖️ Balanced"
+
+    message += "=" * 60 + "\n"
+    message += "💸 NET DIRECTIONAL MONEY FLOW (All Symbols)\n"
+    message += "=" * 60 + "\n\n"
+    message += f"Total Bullish Money : {format_indian_value(total_bull)}\n"
+    message += f"Total Bearish Money : {format_indian_value(total_bear)}\n"
+    message += f"Net Money Flow      : {format_indian_value(net_money)}\n"
+    message += f"Bullish Dominance   : {dominance:.1f}%\n\n"
+    message += f"Bias                : {strength}\n\n"
+    message += "Validity: Next 2 Minutes Only\n"
+    message += "</pre>"
+
+    await context.bot.send_message(
+        chat_id=SUMMARY_CHAT_ID,
+        text=message,
+        parse_mode="HTML"
+    )
+
+# ===============================
+# MAIN
+# ===============================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
