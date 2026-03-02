@@ -16,12 +16,14 @@ SUMMARY_CHAT_ID = os.getenv("SUMMARY_CHAT_ID")
 
 alerts_buffer = []
 
-TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK"]
+TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK", "AXISBANK", "SBIN"]
 
 LOT_SIZES = {
     "BANKNIFTY": 30,
     "HDFCBANK": 550,
-    "ICICIBANK": 700
+    "ICICIBANK": 700,
+    "AXISBANK": 625,
+    "SBIN": 750
 }
 
 # ===============================
@@ -73,15 +75,15 @@ def parse_alert(text):
     if not base_symbol:
         return None
 
-    opt_match = re.search(r"(\d+)(CE|PE)$", symbol_full)
+    # Improved strike extraction: find the digits after the Month+Year (e.g., MAR26)
+    opt_match = re.search(r"(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}(\d+)(?:CE|PE)$", symbol_full)
 
     zone = None
     option_type = None
 
     if opt_match and future_price:
-        raw_digits = opt_match.group(1)
-        strike = raw_digits[-5:]
-        option_type = opt_match.group(2)
+        strike = opt_match.group(1)
+        option_type = re.search(r"(CE|PE)$", symbol_full).group(1)
         zone = classify_strike(strike, option_type, future_price)
 
     action_type = None
@@ -99,10 +101,12 @@ def parse_alert(text):
         action_type = "PUT_BUY"
 
     elif "SHORT COVERING" in text_upper:
-        action_type = "CALL_SC" if option_type == "CE" else "PUT_SC"
+        if symbol_full.endswith("-I"): action_type = "FUTURE_SC"
+        else: action_type = "CALL_SC" if option_type == "CE" else "PUT_SC"
 
     elif "LONG UNWINDING" in text_upper:
-        action_type = "CALL_UNW" if option_type == "CE" else "PUT_UNW"
+        if symbol_full.endswith("-I"): action_type = "FUTURE_UNW"
+        else: action_type = "CALL_UNW" if option_type == "CE" else "PUT_UNW"
 
     elif "FUTURE BUY" in text_upper:
         action_type = "FUTURE_BUY"
@@ -135,129 +139,114 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             alerts_buffer.append(parsed)
 
 # ===============================
+# BIAS LOGIC
+# ===============================
+def get_bias_label(net_lots):
+    if net_lots > 500: return "🔥 VERY STRONG BULLISH"
+    elif net_lots > 150: return "🚀 STRONG BULLISH"
+    elif net_lots > 0: return "🟢 Mild Bullish"
+    elif net_lots < -500: return "🔥 VERY STRONG BEARISH"
+    elif net_lots < -150: return "📉 STRONG BEARISH"
+    elif net_lots < 0: return "🔴 Mild Bearish"
+    else: return "⚖ Neutral"
+
+# ===============================
 # SUMMARY PROCESS (5 MIN VERSION)
 # ===============================
 async def process_summary(context: ContextTypes.DEFAULT_TYPE):
-
     global alerts_buffer
-
-    if not alerts_buffer:
-        return
+    if not alerts_buffer: return
 
     batch = list(alerts_buffer)
     alerts_buffer.clear()
 
-    data = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
-    turnover_zone = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
+    # Data structures per symbol
+    opt_data = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
+    opt_turn = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
+    fut_data = defaultdict(lambda: defaultdict(int))
+    fut_turn = defaultdict(lambda: defaultdict(float))
     last_future = {}
 
-    total_bull = 0
-    total_bear = 0
-    bull_turnover = 0
-    bear_turnover = 0
-    total_turnover = 0
-
     for alert in batch:
-
-        sym = alert["symbol"]
-        act = alert["action_type"]
-        zone = alert["zone"]
-        lots = alert["lots"]
-        price = alert["price"]
+        sym, act, zone, lots, price = alert["symbol"], alert["action_type"], alert["zone"], alert["lots"], alert["price"]
         lot_size = LOT_SIZES.get(sym, 1)
+        if alert["future"]: last_future[sym] = alert["future"]
 
-        if alert["future"]:
-            last_future[sym] = alert["future"]
-
-        if zone:
-            data[sym][act][zone] += lots
-
-            if price:
-                turn = lots * price * lot_size
-                turnover_zone[sym][act][zone] += turn
-                total_turnover += turn
-
-                if act in ["PUT_WRITER","CALL_BUY","CALL_SC","PUT_UNW"]:
-                    total_bull += lots
-                    bull_turnover += turn
-                else:
-                    total_bear += lots
-                    bear_turnover += turn
+        if zone: # It's an Option
+            opt_data[sym][act][zone] += lots
+            
+            # --- NEW OPTION TURNOVER LOGIC ---
+            if "WRITER" in act or "_SC" in act:
+                # Margin-based fixed turnover
+                multiplier = 100000 if zone == "ITM" else 50000
+                opt_turn[sym][act][zone] += (lots * multiplier)
+            else:
+                # Premium-based actual turnover
+                if price: opt_turn[sym][act][zone] += (lots * price * lot_size)
+        else: # It's a Future
+            fut_data[sym][act] += lots
+            # Fixed logic: 100,000 per lot for all Future actions
+            fut_turn[sym][act] += (lots * 100000)
 
     message = "<pre>\n📊 5 MIN INSTITUTIONAL FLOW REPORT\n\n"
 
     for symbol in TRACK_SYMBOLS:
+        if symbol not in opt_data and symbol not in fut_data: continue
 
-        if symbol not in data:
-            continue
+        message += f"💎 {symbol} (FUT: {last_future.get(symbol,'N/A')})\n"
+        
+        # --- OPTIONS SECTION ---
+        if symbol in opt_data:
+            message += "--- OPTIONS FLOW ---\n"
+            message += f"{'TYPE':10}{'ITM':>15}{'OTM':>15}{'TOT':>15}\n"
+            message += "-" * 55 + "\n"
+            
+            s_bull_lots, s_bear_lots, s_turnover = 0, 0, 0
+            for act in opt_data[symbol]:
+                itm_l, otm_l = opt_data[symbol][act]["ITM"], opt_data[symbol][act]["OTM"]
+                itm_t, otm_t = opt_turn[symbol][act]["ITM"], opt_turn[symbol][act]["OTM"]
+                tot_l, tot_t = itm_l + otm_l, itm_t + otm_t
+                s_turnover += tot_t
+                
+                if act in ["PUT_WRITER","CALL_BUY","CALL_SC","PUT_UNW"]: s_bull_lots += tot_l
+                else: s_bear_lots += tot_l
 
-        message += f"{symbol} (FUT: {last_future.get(symbol,'N/A')})\n"
-        message += "-" * 60 + "\n"
-        message += f"{'TYPE':10}{'ITM':>14}{'OTM':>14}{'TOT':>14}\n"
-        message += "-" * 60 + "\n"
+                # Restore Lot(Turnover) format
+                itm_str = f"{itm_l}({format_money(itm_t)})"
+                otm_str = f"{otm_l}({format_money(otm_t)})"
+                tot_str = f"{tot_l}({format_money(tot_t)})"
+                
+                message += f"{act[:10]:10}{itm_str:>15}{otm_str:>15}{tot_str:>15}\n"
+            
+            opt_net = s_bull_lots - s_bear_lots
+            message += "-" * 55 + "\n"
+            message += f"Option Bias: {get_bias_label(opt_net)}\n"
+            message += f"Option Turn: {format_money(s_turnover)}\n\n"
 
-        itm_total = 0
-        otm_total = 0
-        itm_turn = 0
-        otm_turn = 0
+        # --- FUTURES SECTION ---
+        if symbol in fut_data:
+            message += "--- FUTURES FLOW ---\n"
+            f_bull_lots, f_bear_lots, f_turnover = 0, 0, 0
+            for act in fut_data[symbol]:
+                lots = fut_data[symbol][act]
+                turn = fut_turn[symbol][act]
+                f_turnover += turn
+                # FUTURE_BUY and FUTURE_SC are Bullish
+                if act in ["FUTURE_BUY", "FUTURE_SC"]: f_bull_lots += lots
+                # FUTURE_SELL and FUTURE_UNW are Bearish
+                else: f_bear_lots += lots
+                message += f"{act:12} : {lots} lots ({format_money(turn)})\n"
+            
+            fut_net = f_bull_lots - f_bear_lots
+            message += f"Future Bias: {get_bias_label(fut_net)}\n"
+            message += f"Future Turn: {format_money(f_turnover)}\n"
+        
+        message += "=" * 50 + "\n\n"
 
-        for action in data[symbol]:
-
-            itm_l = data[symbol][action]["ITM"]
-            otm_l = data[symbol][action]["OTM"]
-            itm_t = turnover_zone[symbol][action]["ITM"]
-            otm_t = turnover_zone[symbol][action]["OTM"]
-
-            itm_total += itm_l
-            otm_total += otm_l
-            itm_turn += itm_t
-            otm_turn += otm_t
-
-            tot_l = itm_l + otm_l
-            tot_t = itm_t + otm_t
-
-            message += f"{action[:10]:10}" \
-                       f"{(str(itm_l)+'('+format_money(itm_t)+')'):>14}" \
-                       f"{(str(otm_l)+'('+format_money(otm_t)+')'):>14}" \
-                       f"{(str(tot_l)+'('+format_money(tot_t)+')'):>14}\n"
-
-        message += "-" * 60 + "\n"
-        message += f"{'ITM TOTAL':10}{(str(itm_total)+'('+format_money(itm_turn)+')'):>14}\n"
-        message += f"{'OTM TOTAL':10}{(str(otm_total)+'('+format_money(otm_turn)+')'):>14}\n"
-        message += f"{'GRAND TOTAL':10}{(str(itm_total+otm_total)+'('+format_money(itm_turn+otm_turn)+')'):>14}\n\n"
-
-    net_lots = total_bull - total_bear
-    total_flow = total_bull + total_bear
-    dominance = (total_bull / total_flow * 100) if total_flow else 0
-
-    if net_lots > 800:
-        bias = "🔥 VERY STRONG BULLISH"
-    elif net_lots > 300:
-        bias = "🚀 STRONG BULLISH"
-    elif net_lots > 0:
-        bias = "🟢 Mild Bullish"
-    elif net_lots < -800:
-        bias = "🔥 VERY STRONG BEARISH"
-    elif net_lots < -300:
-        bias = "📉 STRONG BEARISH"
-    elif net_lots < 0:
-        bias = "🔴 Mild Bearish"
-    else:
-        bias = "⚖ Neutral"
-
-    message += "=" * 60 + "\n"
-    message += "📈 NET INSTITUTIONAL FLOW\n"
-    message += "=" * 60 + "\n"
-    message += f"Total Bullish Lots : {total_bull}\n"
-    message += f"Total Bearish Lots : {total_bear}\n"
-    message += f"Net Lot Flow       : {net_lots}\n"
-    message += f"Bullish Dominance  : {dominance:.1f}%\n\n"
-    message += f"Total Turnover     : {format_money(total_turnover)}\n"
-    message += f"Bullish Turnover   : {format_money(bull_turnover)}\n"
-    message += f"Bearish Turnover   : {format_money(bear_turnover)}\n\n"
-    message += f"Bias               : {bias}\n"
-    message += "Validity           : Next 5 Minutes Only\n"
+    message += "Validity: Next 5 Minutes\n"
     message += "</pre>"
+
+    await context.bot.send_message(chat_id=SUMMARY_CHAT_ID, text=message, parse_mode="HTML")
 
     await context.bot.send_message(
         chat_id=SUMMARY_CHAT_ID,
