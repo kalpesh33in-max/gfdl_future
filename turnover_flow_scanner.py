@@ -141,7 +141,7 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
             fut_data[sym][act] += lots
             fut_turn[sym][act] += (lots * 175000)
 
-    message = "<pre>\n📊 2 MIN INSTITUTIONAL FLOW REPORT\n\n"
+    message = "<pre>\n📊 5 MIN INSTITUTIONAL FLOW REPORT\n\n"
 
     for symbol in TRACK_SYMBOLS:
         if symbol not in opt_data and symbol not in fut_data: continue
@@ -201,7 +201,7 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
         
         message += "========================================\n\n"
 
-    message += "Validity: Next 2 Minutes\n"
+    message += "Validity: Next 5 Minutes\n"
     message += "</pre>"
 
     await context.bot.send_message(chat_id=SUMMARY_CHAT_ID, text=message, parse_mode="HTML")
