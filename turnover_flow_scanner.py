@@ -6,11 +6,13 @@ from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
+# Logging setup
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 
+# Environment Variables
 BOT_TOKEN = os.getenv("SUMMARIZER_BOT_TOKEN")
 TARGET_CHANNEL_ID = os.getenv("TARGET_CHANNEL_ID")
 SUMMARY_CHAT_ID = os.getenv("SUMMARY_CHAT_ID")
@@ -56,11 +58,11 @@ def classify_strike(strike, option_type, future_price):
 # BIAS LOGIC
 # ===============================
 def get_bias_label(net_lots):
-    if net_lots > 1500: return "🔥 VERY STRONG BULLISH"
-    elif net_lots > 500: return "🚀 STRONG BULLISH"
+    if net_lots > 500: return "🔥 VERY STRONG BULLISH"
+    elif net_lots > 150: return "🚀 STRONG BULLISH"
     elif net_lots > 0: return "🟢 Mild Bullish"
-    elif net_lots < -1500: return "🔥 VERY STRONG BEARISH"
-    elif net_lots < -500: return "📉 STRONG BEARISH"
+    elif net_lots < -500: return "🔥 VERY STRONG BEARISH"
+    elif net_lots < -150: return "📉 STRONG BEARISH"
     elif net_lots < 0: return "🔴 Mild Bearish"
     else: return "⚖ Neutral"
 
@@ -149,14 +151,13 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
         lot_size = LOT_SIZES.get(sym, 1)
         if alert["future"]: last_future[sym] = alert["future"]
 
-        if zone: # Option
+        if zone:
             opt_data[sym][act][zone] += lots
             if "WRITER" in act or "_SC" in act:
-                multiplier = 125000
-                opt_turn[sym][act][zone] += (lots * multiplier)
+                opt_turn[sym][act][zone] += (lots * 125000)
             else:
                 if price: opt_turn[sym][act][zone] += (lots * price * lot_size)
-        else: # Future
+        else:
             fut_data[sym][act] += lots
             fut_turn[sym][act] += (lots * 175000)
 
@@ -169,15 +170,18 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
         
         if symbol in opt_data:
             message += "--- OPTIONS FLOW ---\n"
-            message += f"{'TYPE':10}{'ITM':>10}{'OTM':>10}{'TOT':>10}\n"
-            message += "-" * 40 + "\n"
+            # Spacing 10, 13, 13, 13
+            message += f"{'TYPE':10}{'ITM':>13}{'OTM':>13}{'TOT':>13}\n"
+            message += "-" * 49 + "\n"
             
             s_bull_lots, s_bear_lots = 0, 0
             s_bull_turnover, s_bear_turnover = 0, 0
             for act in opt_data[symbol]:
                 itm_l, otm_l = opt_data[symbol][act]["ITM"], opt_data[symbol][act]["OTM"]
                 itm_t, otm_t = opt_turn[symbol][act]["ITM"], opt_turn[symbol][act]["OTM"]
-                tot_l, tot_t = itm_l + otm_l, itm_t + tot_t
+                
+                # FIXED ERROR HERE: itm_t + otm_t
+                tot_l, tot_t = itm_l + otm_l, itm_t + otm_t 
                 
                 if act in ["PUT_WRITER","CALL_BUY","CALL_SC","PUT_UNW"]: 
                     s_bull_lots += tot_l
@@ -190,13 +194,11 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
                 otm_str = f"{otm_l}({format_money(otm_t)})"
                 tot_str = f"{tot_l}({format_money(tot_t)})"
                 
-                # Abbreviate action names to fit in 10 chars
                 display_act = act.replace("CALL_WRITER","CALL_WR").replace("PUT_WRITER","PUT_WR").replace("SHORT_COVERING","SC").replace("LONG_UNWINDING","UNW")
-                message += f"{display_act[:10]:10}{itm_str:>10}{otm_str:>10}{tot_str:>10}\n"
+                message += f"{display_act[:10]:10}{itm_str:>13}{otm_str:>13}{tot_str:>13}\n"
             
-            message += "-" * 40 + "\n"
-            opt_net = s_bull_lots - s_bear_lots
-            message += f"Option Bias: {get_bias_label(opt_net)}\n"
+            message += "-" * 49 + "\n"
+            message += f"Option Bias: {get_bias_label(s_bull_lots - s_bear_lots)}\n"
             message += f"Bullish Turn: {format_money(s_bull_turnover)}\n"
             message += f"Bearish Turn: {format_money(s_bear_turnover)}\n\n"
 
@@ -232,7 +234,6 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
     if app.job_queue:
-        # 5 Minute Interval
         app.job_queue.run_repeating(process_summary, interval=300, first=10)
     app.run_polling(drop_pending_updates=True)
 
