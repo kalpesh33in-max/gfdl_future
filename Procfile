@@ -1,1 +1,1 @@
-worker: python turnover_flow_scanner.py
+worker: python cumulative_summary_bot.py
