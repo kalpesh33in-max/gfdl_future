@@ -3,12 +3,10 @@ import re
 import logging
 import sys
 import pytz
-import asyncio
 from datetime import datetime, timedelta, time
 from collections import defaultdict
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
-from telegram.error import Forbidden, BadRequest
 
 # --- CONFIGURATION ---
 IST = pytz.timezone('Asia/Kolkata')
@@ -20,13 +18,15 @@ logging.basicConfig(
 
 BOT_TOKEN = os.getenv("SUMMARIZER_BOT_TOKEN")
 TARGET_CHANNEL_ID = os.getenv("TARGET_CHANNEL_ID")
-# Use the raw string from env; we'll handle formatting in main
-SUMMARY_CHAT_ID_VAL = os.getenv("SUMMARY_CHAT_ID")
+SUMMARY_CHAT_ID = os.getenv("SUMMARY_CHAT_ID")
 
+# Buffer stores (parsed_data, timestamp)
 alerts_buffer = []
+
 TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK", "AXISBANK", "SBIN"]
+
 LOT_SIZES = {
-    "BANKNIFTY": 30, # Updated to 30 as per your requirement
+    "BANKNIFTY": 30, # Banknifty lot size updated to 30
     "HDFCBANK": 550,
     "ICICIBANK": 700,
     "AXISBANK": 625,
@@ -114,12 +114,12 @@ async def run_cumulative_report(context: ContextTypes.DEFAULT_TYPE):
 
     batch = [a[0] for a in alerts_buffer if a[1] >= market_open]
     
-    # Send a heartbeat if no data yet, so you know the bot is alive
+    # Heartbeat message if empty
     if not batch:
         try:
-            await context.bot.send_message(chat_id=SUMMARY_CHAT_ID_VAL, text="🔄 Bot Active: Waiting for data since 09:15 AM...")
+            await context.bot.send_message(chat_id=SUMMARY_CHAT_ID, text="🔄 Bot Active: Waiting for trade alerts since 09:15 AM...")
         except Exception as e:
-            logging.error(f"Heartbeat failed: {e}")
+            logging.error(f"Heartbeat send failed: {e}")
         return
 
     duration_mins = int((now - market_open).total_seconds() / 60)
@@ -141,10 +141,12 @@ async def run_cumulative_report(context: ContextTypes.DEFAULT_TYPE):
             fut_data[sym][act] += lots
             fut_turn[sym][act] += (lots * 175000)
 
+    # OUTPUT MESSAGE
     message = f"<pre>\n📊 DAY CUMULATIVE FLOW ({duration_mins} MINS)\n\n"
     for symbol in TRACK_SYMBOLS:
         if symbol not in opt_data and symbol not in fut_data: continue
         message += f"💎 {symbol} (FUT: {last_future.get(symbol,'N/A')})\n"
+        
         if symbol in opt_data:
             message += "--- OPTIONS FLOW ---\nTYPE       ITM             OTM             TOT\n" + "-"*50 + "\n"
             s_bull_l, s_bear_l, s_bull_t, s_bear_t = 0, 0, 0, 0
@@ -156,27 +158,47 @@ async def run_cumulative_report(context: ContextTypes.DEFAULT_TYPE):
                     s_bull_l += tot_l; s_bull_t += tot_t
                 else:
                     s_bear_l += tot_l; s_bear_t += tot_t
+                
+                itm_s = f"{itm_l}({format_money(itm_t)})"
+                otm_s = f"{otm_l}({format_money(otm_t)})"
+                tot_s = f"{tot_l}({format_money(tot_t)})"
                 display_act = act.replace("CALL_WRITER","CALL_WR").replace("PUT_WRITER","PUT_WR").replace("SHORT_COVERING","SC").replace("LONG_UNWINDING","UNW")
-                message += f"{display_act[:8]:8} {itm_l}({format_money(itm_t)}):>14} {otm_l}({format_money(otm_t)}):>14} {tot_l}({format_money(tot_t)}):>14}\n"
+                # Fixed string formatting alignment
+                message += f"{display_act[:8]:8} {itm_s:>14} {otm_s:>14} {tot_s:>14}\n"
+            
             message += "-"*50 + f"\nOption Bias: {get_bias_label(s_bull_l - s_bear_l)}\nBullish Turn: {format_money(s_bull_t)}\nBearish Turn: {format_money(s_bear_t)}\n\n"
-        # (Future flow logic omitted for brevity, remains same as your original)
+
+        if symbol in fut_data:
+            message += "---- FUTURES FLOW ----\n"
+            f_bull_l, f_bear_l, f_bull_t, f_bear_t = 0, 0, 0, 0
+            for act in fut_data[symbol]:
+                lots, turn = fut_data[symbol][act], fut_turn[symbol][act]
+                if act in ["FUTURE_BUY", "FUTURE_SC"]: f_bull_l += lots; f_bull_t += turn
+                else: f_bear_l += lots; f_bear_t += turn
+                message += f"{act:12} : {lots} lots ({format_money(turn)})\n"
+            message += f"Future Bias: {get_bias_label(f_bull_l - f_bear_l)}\nBullish Turn: {format_money(f_bull_t)}\nBearish Turn: {format_money(f_bear_t)}\n"
+        
         message += "========================================\n\n"
+
     message += f"Cumulative Since: 09:15 AM\n</pre>"
     
     try:
-        await context.bot.send_message(chat_id=SUMMARY_CHAT_ID_VAL, text=message, parse_mode="HTML")
+        await context.bot.send_message(chat_id=SUMMARY_CHAT_ID, text=message, parse_mode="HTML")
     except Exception as e:
         logging.error(f"Report send failed: {e}")
 
 def main():
-    if not BOT_TOKEN or not SUMMARY_CHAT_ID_VAL:
-        logging.error("Missing Token or Summary ID in Railway Variables!")
+    if not BOT_TOKEN:
+        logging.error("BOT_TOKEN is missing!")
         return
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
+    
     if app.job_queue:
-        app.job_queue.run_once(run_cumulative_report, when=5) # Immediate test
+        # Run test report 5 seconds after start, then every 15 mins
+        app.job_queue.run_once(run_cumulative_report, when=5)
         app.job_queue.run_repeating(run_cumulative_report, interval=900, first=10)
+        
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
