@@ -26,7 +26,7 @@ alerts_buffer = []
 TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK", "AXISBANK", "SBIN"]
 
 LOT_SIZES = {
-    "BANKNIFTY": 30,
+    "BANKNIFTY": 30,  # Updated to 30 as per your recent requirement
     "HDFCBANK": 550,
     "ICICIBANK": 700,
     "AXISBANK": 625,
@@ -111,7 +111,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if msg and msg.text and str(msg.chat_id) == str(TARGET_CHANNEL_ID):
         parsed = parse_alert(msg.text)
         if parsed:
+            logging.info(f"✅ Parsed Alert: {parsed['symbol']} {parsed['action_type']}")
             alerts_buffer.append((parsed, datetime.now(IST)))
+        else:
+            logging.warning("⚠️ Message received but could not be parsed.")
 
 # ===============================
 # CUMULATIVE REPORT LOGIC
@@ -120,17 +123,29 @@ async def run_cumulative_report(context: ContextTypes.DEFAULT_TYPE):
     global alerts_buffer
     now = datetime.now(IST)
     
-    # 9:15 AM Anchor for the current trading day
+    # Time boundaries
     market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
     
-    # Reset buffer if it's a new day before market open
+    # 1. New Day Cleanup
     if now.time() < time(9, 15):
         alerts_buffer = [a for a in alerts_buffer if a[1] >= market_open - timedelta(days=1)]
+        logging.info("Pre-market: Buffer cleared for new day.")
         return
 
-    # Filter data from Market Open (9:15 AM) till NOW
+    # 2. Filter data from Market Open (9:15 AM) till NOW
     batch = [a[0] for a in alerts_buffer if a[1] >= market_open]
-    if not batch: return
+    
+    # 3. Handle Empty Data (Immediate Start feedback)
+    if not batch:
+        logging.info("No data in batch for 9:15 AM onwards.")
+        if now <= market_close:
+            await context.bot.send_message(
+                chat_id=SUMMARY_CHAT_ID, 
+                text="⏳ *System Active:* Bot restarted. Waiting for the first alert from the source channel...",
+                parse_mode="Markdown"
+            )
+        return
 
     duration_mins = int((now - market_open).total_seconds() / 60)
     
@@ -155,6 +170,7 @@ async def run_cumulative_report(context: ContextTypes.DEFAULT_TYPE):
             fut_data[sym][act] += lots
             fut_turn[sym][act] += (lots * 175000)
 
+    # OUTPUT MESSAGE (Sample format preserved)
     message = f"<pre>\n📊 DAY CUMULATIVE FLOW ({duration_mins} MINS)\n\n"
 
     for symbol in TRACK_SYMBOLS:
@@ -226,9 +242,13 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
     
     if app.job_queue:
-        # Run every 15 minutes starting from 9:30 AM
+        # Immediate verification run (5 seconds after start)
+        app.job_queue.run_once(run_cumulative_report, when=5)
+        
+        # 15-minute intervals starting 10 seconds after start
         app.job_queue.run_repeating(run_cumulative_report, interval=900, first=10)
         
+    logging.info("Bot started. Initializing first report in 5 seconds...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
