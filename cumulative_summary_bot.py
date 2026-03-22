@@ -111,6 +111,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if msg and msg.text and str(msg.chat_id) == str(TARGET_CHANNEL_ID):
         parsed = parse_alert(msg.text)
         if parsed:
+            print(f"📥 Received Alert: {parsed['symbol']} - {parsed['action_type']} ({parsed['lots']} lots)")
             alerts_buffer.append((parsed, datetime.now(IST)))
 
 # ===============================
