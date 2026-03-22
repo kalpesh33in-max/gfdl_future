@@ -121,19 +121,21 @@ async def run_cumulative_report(context: ContextTypes.DEFAULT_TYPE):
     global alerts_buffer
     now = datetime.now(IST)
     
-    # 9:15 AM Anchor for the current trading day
-    market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    # Find the earliest alert in the buffer to determine the "start" of our cumulative data
+    if not alerts_buffer: return
     
-    # Reset buffer if it's a new day before market open
-    if now.time() < time(9, 15):
-        alerts_buffer = [a for a in alerts_buffer if a[1] >= market_open - timedelta(days=1)]
-        return
-
-    # Filter data from Market Open (9:15 AM) till NOW
-    batch = [a[0] for a in alerts_buffer if a[1] >= market_open]
+    # DAILY RESET: If it's between 9:10 and 9:20 AM, we start fresh for the new market day
+    if now.hour == 9 and 10 <= now.minute <= 20:
+        # Keep only very recent data (last 1 min) to avoid overlap from yesterday
+        alerts_buffer = [a for a in alerts_buffer if a[1] >= now - timedelta(minutes=1)]
+    
+    # Process EVERYTHING currently in the buffer
+    batch = [a[0] for a in alerts_buffer]
     if not batch: return
 
-    duration_mins = int((now - market_open).total_seconds() / 60)
+    # Calculate duration based on the oldest alert in the buffer
+    oldest_time = min(a[1] for a in alerts_buffer)
+    duration_mins = int((now - oldest_time).total_seconds() / 60)
     
     # FORMAT DURATION STRING (e.g., 1 HR 15 MINS)
     if duration_mins >= 60:
