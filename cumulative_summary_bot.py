@@ -72,13 +72,13 @@ def parse_alert(text):
     base_symbol = next((s for s in TRACK_SYMBOLS if s in symbol_full), None)
     if not base_symbol: return None
 
-    # ALIGNED Extraction: Monthly Only (matches gfdl_scanner_5mint.py)
-    opt_match = re.search(r"(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}(\d+)(?:CE|PE)$", symbol_full.upper())
+    # Robust Extraction: Finds the strike price (numbers) immediately before CE or PE
+    opt_match = re.search(r"(\d+)(CE|PE)$", symbol_full.upper())
     zone, option_type = None, None
 
-    if opt_match and future_price:
+    if opt_match and future_price and "-I" not in symbol_full and "FUT" not in symbol_full.upper():
         strike = opt_match.group(1)
-        option_type = re.search(r"(CE|PE)$", symbol_full.upper()).group(1)
+        option_type = opt_match.group(2)
         zone = classify_strike(strike, option_type, future_price)
 
     action_type = None
