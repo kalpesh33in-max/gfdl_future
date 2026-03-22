@@ -227,8 +227,13 @@ async def run_cumulative_report(context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     if not BOT_TOKEN:
-        print("Error: SUMMARIZER_BOT_TOKEN not set.")
+        print("❌ Error: SUMMARIZER_BOT_TOKEN not set.")
         return
+    
+    # --- VERIFY VARIABLES ---
+    print(f"✅ Bot Token: Found ({BOT_TOKEN[:8]}...{BOT_TOKEN[-4:]})")
+    print(f"✅ Target Channel ID: {TARGET_CHANNEL_ID}")
+    print(f"✅ Summary Chat ID: {SUMMARY_CHAT_ID}")
         
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
