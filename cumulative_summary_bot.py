@@ -113,6 +113,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if parsed:
             print(f"📥 Received Alert: {parsed['symbol']} - {parsed['action_type']} ({parsed['lots']} lots)")
             alerts_buffer.append((parsed, datetime.now(IST)))
+            
+            # --- TRIAL: INSTANT ALERT ---
+            print("🚀 TRIAL: Sending instant report to verify Telegram connection...")
+            await run_cumulative_report(context)
 
 # ===============================
 # CUMULATIVE REPORT LOGIC
