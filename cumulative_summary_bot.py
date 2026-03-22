@@ -72,12 +72,13 @@ def parse_alert(text):
     base_symbol = next((s for s in TRACK_SYMBOLS if s in symbol_full), None)
     if not base_symbol: return None
 
-    opt_match = re.search(r"(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}(\d+)(?:CE|PE)$", symbol_full)
+    # ALIGNED Extraction: Monthly Only (matches gfdl_scanner_5mint.py)
+    opt_match = re.search(r"(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}(\d+)(?:CE|PE)$", symbol_full.upper())
     zone, option_type = None, None
 
     if opt_match and future_price:
         strike = opt_match.group(1)
-        option_type = re.search(r"(CE|PE)$", symbol_full).group(1)
+        option_type = re.search(r"(CE|PE)$", symbol_full.upper()).group(1)
         zone = classify_strike(strike, option_type, future_price)
 
     action_type = None
@@ -87,10 +88,10 @@ def parse_alert(text):
     elif "CALL BUY" in text_upper: action_type = "CALL_BUY"
     elif "PUT BUY" in text_upper: action_type = "PUT_BUY"
     elif "SHORT COVERING" in text_upper:
-        if "-I" in symbol_full or "FUT" in symbol_full: action_type = "FUTURE_SC"
+        if "-I" in symbol_full or "FUT" in symbol_full.upper(): action_type = "FUTURE_SC"
         else: action_type = "CALL_SC" if option_type == "CE" else "PUT_SC"
     elif "LONG UNWINDING" in text_upper:
-        if "-I" in symbol_full or "FUT" in symbol_full: action_type = "FUTURE_UNW"
+        if "-I" in symbol_full or "FUT" in symbol_full.upper(): action_type = "FUTURE_UNW"
         else: action_type = "CALL_UNW" if option_type == "CE" else "PUT_UNW"
     elif "FUTURE BUY" in text_upper: action_type = "FUTURE_BUY"
     elif "FUTURE SELL" in text_upper: action_type = "FUTURE_SELL"
@@ -113,10 +114,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if parsed:
             print(f"📥 Received Alert: {parsed['symbol']} - {parsed['action_type']} ({parsed['lots']} lots)")
             alerts_buffer.append((parsed, datetime.now(IST)))
-            
-            # --- TRIAL: INSTANT ALERT ---
-            print("🚀 TRIAL: Sending instant report to verify Telegram connection...")
-            await run_cumulative_report(context)
 
 # ===============================
 # CUMULATIVE REPORT LOGIC
@@ -160,13 +157,14 @@ async def run_cumulative_report(context: ContextTypes.DEFAULT_TYPE):
         lot_size = LOT_SIZES.get(sym, 1)
         if alert["future"]: last_future[sym] = alert["future"]
 
-        if zone:
-            opt_data[sym][act][zone] += lots
+        if "FUTURE" not in act: # STRICT OPTION CHECK
+            z = zone if zone else "OTM"
+            opt_data[sym][act][z] += lots
             if "WRITER" in act or "_SC" in act:
-                opt_turn[sym][act][zone] += (lots * 125000)
+                opt_turn[sym][act][z] += (lots * 125000)
             else:
-                if price: opt_turn[sym][act][zone] += (lots * price * lot_size)
-        else:
+                if price: opt_turn[sym][act][z] += (lots * price * lot_size)
+        else: # STRICT FUTURE CHECK
             fut_data[sym][act] += lots
             fut_turn[sym][act] += (lots * 175000)
 
