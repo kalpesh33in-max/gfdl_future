@@ -128,10 +128,13 @@ async def run_cumulative_report(context: ContextTypes.DEFAULT_TYPE):
     global alerts_buffer
     now = datetime.now(IST)
     
+    # DEBUG LOG: See exactly what time the bot sees
+    logging.info(f"🕒 Current IST Time: {now.strftime('%H:%M:%S')}")
+    
     # STRICT MARKET HOURS CHECK (9:15 AM to 3:30 PM IST)
     current_time_int = now.hour * 100 + now.minute
     if current_time_int < 915 or current_time_int > 1530:
-        logging.info(f"⏳ Market Closed ({now.strftime('%H:%M')}). Skipping report.")
+        logging.info("⏳ Market Closed. Skipping Telegram report.")
         return
     
     # Find the earliest alert in the buffer to determine the "start" of our cumulative data
