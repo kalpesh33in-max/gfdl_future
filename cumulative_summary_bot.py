@@ -216,6 +216,22 @@ async def run_cumulative_report(context: ContextTypes.DEFAULT_TYPE):
                 message += f"{display_act[:8]:8}{itm_s:>14}{otm_s:>14}{tot_s:>14}\n"
             
             message += "-" * 50 + "\n"
+            
+            # CORRECTED CLASSIFICATION logic for Bias
+            s_bull_lots, s_bear_lots = 0, 0
+            s_bull_turnover, s_bear_turnover = 0, 0
+            for act in opt_data[symbol]:
+                itm_l, otm_l = opt_data[symbol][act]["ITM"], opt_data[symbol][act]["OTM"]
+                itm_t, otm_t = opt_turn[symbol][act]["ITM"], opt_turn[symbol][act]["OTM"]
+                tot_l, tot_t = itm_l + otm_l, itm_t + otm_t
+                
+                if act in ["PUT_WRITER", "CALL_BUY", "PUT_SC", "CALL_UNW"]: 
+                    s_bull_lots += tot_l
+                    s_bull_turnover += tot_t
+                else: # CALL_WRITER, PUT_BUY, CALL_SC, PUT_UNW
+                    s_bear_lots += tot_l
+                    s_bear_turnover += tot_t
+
             message += f"Option Bias: {get_bias_label(s_bull_lots - s_bear_lots)}\n"
             message += f"Bullish Turn: {format_money(s_bull_turnover)}\n"
             message += f"Bearish Turn: {format_money(s_bear_turnover)}\n\n"
