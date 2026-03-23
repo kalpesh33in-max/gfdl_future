@@ -57,14 +57,16 @@ def get_bias_label(net_lots):
 
 def parse_alert(text):
     text_upper = text.upper()
-    symbol_match = re.search(r"SYMBOL:\s*([\w-]+)", text_upper)
+    
+    # Improved symbol regex to capture symbols with spaces
+    symbol_match = re.search(r"SYMBOL:\s*([^\n\r]+)", text_upper)
     lot_match = re.search(r"LOTS:\s*(\d+)", text_upper)
     price_match = re.search(r"PRICE:\s*([\d.]+)", text_upper)
     future_match = re.search(r"FUTURE\s+PRICE:\s*([\d.]+)", text_upper)
 
     if not (symbol_match and lot_match): return None
 
-    symbol_full = symbol_match.group(1)
+    symbol_full = symbol_match.group(1).strip()
     lots = int(lot_match.group(1))
     price = float(price_match.group(1)) if price_match else None
     future_price = float(future_match.group(1)) if future_match else None
@@ -72,14 +74,16 @@ def parse_alert(text):
     base_symbol = next((s for s in TRACK_SYMBOLS if s in symbol_full), None)
     if not base_symbol: return None
 
-    # Robust Extraction: Finds the strike price (numbers) immediately before CE or PE
-    opt_match = re.search(r"(\d+)(CE|PE)$", symbol_full.upper())
+    # Robust Option Match: Finds the strike price (numbers) immediately before CE or PE
+    opt_match = re.search(r"(\d+)(CE|PE)$", symbol_full)
     zone, option_type = None, None
 
-    if opt_match and future_price and "-I" not in symbol_full and "FUT" not in symbol_full.upper():
+    if opt_match and future_price:
         strike = opt_match.group(1)
         option_type = opt_match.group(2)
         zone = classify_strike(strike, option_type, future_price)
+
+    is_future = (opt_match is None)
 
     action_type = None
     if "WRITER" in text_upper:
@@ -88,13 +92,15 @@ def parse_alert(text):
     elif "CALL BUY" in text_upper: action_type = "CALL_BUY"
     elif "PUT BUY" in text_upper: action_type = "PUT_BUY"
     elif "SHORT COVERING" in text_upper:
-        if "-I" in symbol_full or "FUT" in symbol_full.upper(): action_type = "FUTURE_SC"
+        if is_future: action_type = "FUTURE_SC"
         else: action_type = "CALL_SC" if option_type == "CE" else "PUT_SC"
     elif "LONG UNWINDING" in text_upper:
-        if "-I" in symbol_full or "FUT" in symbol_full.upper(): action_type = "FUTURE_UNW"
+        if is_future: action_type = "FUTURE_UNW"
         else: action_type = "CALL_UNW" if option_type == "CE" else "PUT_UNW"
-    elif "FUTURE BUY" in text_upper: action_type = "FUTURE_BUY"
-    elif "FUTURE SELL" in text_upper: action_type = "FUTURE_SELL"
+    elif "FUTURE BUY" in text_upper or "BUY (LONG)" in text_upper:
+        action_type = "FUTURE_BUY"
+    elif "FUTURE SELL" in text_upper or "SELL (SHORT)" in text_upper:
+        action_type = "FUTURE_SELL"
 
     if not action_type: return None
 
@@ -121,6 +127,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def run_cumulative_report(context: ContextTypes.DEFAULT_TYPE):
     global alerts_buffer
     now = datetime.now(IST)
+    
+    # MARKET HOURS RESTRICTION (9:15 AM to 3:30 PM IST)
+    start_market = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    end_market = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    
+    if now < start_market or now > end_market:
+        return # Do not run outside market hours
     
     # Find the earliest alert in the buffer to determine the "start" of our cumulative data
     if not alerts_buffer: return
