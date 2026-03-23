@@ -128,12 +128,11 @@ async def run_cumulative_report(context: ContextTypes.DEFAULT_TYPE):
     global alerts_buffer
     now = datetime.now(IST)
     
-    # MARKET HOURS RESTRICTION (9:15 AM to 3:30 PM IST)
-    start_market = now.replace(hour=9, minute=15, second=0, microsecond=0)
-    end_market = now.replace(hour=15, minute=30, second=0, microsecond=0)
-    
-    if now < start_market or now > end_market:
-        return # Do not run outside market hours
+    # STRICT MARKET HOURS CHECK (9:15 AM to 3:30 PM IST)
+    current_time_int = now.hour * 100 + now.minute
+    if current_time_int < 915 or current_time_int > 1530:
+        logging.info(f"⏳ Market Closed ({now.strftime('%H:%M')}). Skipping report.")
+        return
     
     # Find the earliest alert in the buffer to determine the "start" of our cumulative data
     if not alerts_buffer: return
