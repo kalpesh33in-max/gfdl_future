@@ -23,6 +23,12 @@ SUMMARY_CHAT_ID = os.getenv("SUMMARY_CHAT_ID")
 # Buffer stores (parsed_data, timestamp)
 alerts_buffer = []
 
+# --- PERSISTENT STATE ---
+daily_state = {
+    "boss_trend": None,  # 'BULLISH' or 'BEARISH'
+    "last_signal_time": datetime.min.replace(tzinfo=IST),
+}
+
 TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK", "AXISBANK", "SBIN"]
 
 LOT_SIZES = {
@@ -46,19 +52,8 @@ def classify_strike(strike, option_type, future_price):
     except: pass
     return None
 
-def get_bias_label(net_lots):
-    if net_lots > 1000: return "🔥 MASSIVE BULLISH ACCUMULATION"
-    elif net_lots > 500: return "🚀 STRONG BULLISH BIAS"
-    elif net_lots > 0: return "🟢 Positive Flow"
-    elif net_lots < -1000: return "🔥 MASSIVE BEARISH DISTRIBUTION"
-    elif net_lots < -500: return "📉 STRONG BEARISH BIAS"
-    elif net_lots < 0: return "🔴 Negative Flow"
-    else: return "⚖ Neutral"
-
 def parse_alert(text):
     text_upper = text.upper()
-    
-    # Improved symbol regex to capture symbols with spaces
     symbol_match = re.search(r"SYMBOL:\s*([^\n\r]+)", text_upper)
     lot_match = re.search(r"LOTS:\s*(\d+)", text_upper)
     price_match = re.search(r"PRICE:\s*([\d.]+)", text_upper)
@@ -74,7 +69,6 @@ def parse_alert(text):
     base_symbol = next((s for s in TRACK_SYMBOLS if s in symbol_full), None)
     if not base_symbol: return None
 
-    # Robust Option Match: Finds the strike price (numbers) immediately before CE or PE
     opt_match = re.search(r"(\d+)(CE|PE)$", symbol_full)
     zone, option_type = None, None
 
@@ -122,82 +116,96 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             alerts_buffer.append((parsed, datetime.now(IST)))
 
 # ===============================
-# CUMULATIVE REPORT LOGIC
+# CUMULATIVE REPORT LOGIC (EXPERT TIGHT LOGIC)
 # ===============================
 async def run_cumulative_report(context: ContextTypes.DEFAULT_TYPE):
-    global alerts_buffer
+    global alerts_buffer, daily_state
     now = datetime.now(IST)
     
-    # DEBUG LOG: See exactly what time the bot sees
-    logging.info(f"🕒 Current IST Time: {now.strftime('%H:%M:%S')}")
-    
-    # STRICT MARKET HOURS CHECK (9:15 AM to 3:45 PM IST)
     current_time_int = now.hour * 100 + now.minute
     if current_time_int < 915 or current_time_int > 1545:
-        logging.info("⏳ Market Closed. Skipping Telegram report.")
         return
     
-    # DAILY RESET / TODAY ONLY FILTER: 
-    # Remove any alerts that are not from the current calendar day (Today)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     alerts_buffer = [a for a in alerts_buffer if a[1] >= today_start]
     
     if not alerts_buffer: 
-        logging.info("📝 No alerts collected for today yet. Waiting...")
         return
     
-    # Process EVERYTHING currently in the buffer
-    batch = [a[0] for a in alerts_buffer]
+    # 1. ANALYZE FLOWS (1-Minute and Daily)
+    flows_1m = defaultdict(lambda: {"bull": 0, "bear": 0})
+    flows_daily = defaultdict(lambda: {"bull": 0, "bear": 0})
     
-    # RECENT FLOW (Last 1 Minute) for all tracked symbols
-    recent_batch = [a[0] for a in alerts_buffer if a[1] >= now - timedelta(minutes=1)]
-    
-    # Combined Totals (Options + Futures) for ALL 5 Symbols (1-Minute Window)
-    r_bull_opt, r_bull_fut = 0, 0
-    r_bear_opt, r_bear_fut = 0, 0
-    
-    for alert in recent_batch:
+    for alert, timestamp in alerts_buffer:
         sym, act, price = alert["symbol"], alert["action_type"], alert["price"]
         lot_size = LOT_SIZES.get(sym, 1)
         
         if "FUTURE" not in act:
-            # Options: Fixed 1.25L for Writers/SC, actual premium for Buys/Unwinding
             turn = (alert["lots"] * 125000) if ("WRITER" in act or "_SC" in act) else (alert["lots"] * (price or 0) * lot_size)
-            if act in ["PUT_WRITER", "CALL_BUY", "PUT_SC", "CALL_UNW"]: r_bull_opt += turn
-            else: r_bear_opt += turn
+            is_bull = act in ["PUT_WRITER", "CALL_BUY", "PUT_SC", "CALL_UNW"]
         else:
-            # Futures: Fixed 1.75L multiplier
             turn = (alert["lots"] * 175000)
-            if act in ["FUTURE_BUY", "FUTURE_SC"]: r_bull_fut += turn
-            else: r_bear_fut += turn
+            is_bull = act in ["FUTURE_BUY", "FUTURE_SC"]
+            
+        if timestamp >= now - timedelta(minutes=1):
+            if is_bull: flows_1m[sym]["bull"] += turn
+            else: flows_1m[sym]["bear"] += turn
+            
+        if is_bull: flows_daily[sym]["bull"] += turn
+        else: flows_daily[sym]["bear"] += turn
 
-    r_bull_total = r_bull_opt + r_bull_fut
-    r_bear_total = r_bear_opt + r_bear_fut
+    # 2. EXTRACT KEY DATA
+    bn_bull_1m, bn_bear_1m = flows_1m["BANKNIFTY"]["bull"], flows_1m["BANKNIFTY"]["bear"]
+    hdfc_bull_1m, hdfc_bear_1m = flows_1m["HDFCBANK"]["bull"], flows_1m["HDFCBANK"]["bear"]
+    icici_bull_1m, icici_bear_1m = flows_1m["ICICIBANK"]["bull"], flows_1m["ICICIBANK"]["bear"]
+    
+    hdfc_bias = "BULL" if flows_daily["HDFCBANK"]["bull"] > flows_daily["HDFCBANK"]["bear"] else "BEAR"
+    icici_bias = "BULL" if flows_daily["ICICIBANK"]["bull"] > flows_daily["ICICIBANK"]["bear"] else "BEAR"
 
-    # SIGNAL LOGIC & ALERT
-    if r_bear_total >= 15e7 and r_bull_total <= 1e7:
-        message = (
-            f"Recent Bearish: {format_money(r_bear_opt)} option + {format_money(r_bear_fut)} future = {format_money(r_bear_total)}\n"
-            f"Recent Bullish: {format_money(r_bull_opt)} option + {format_money(r_bull_fut)} future = {format_money(r_bull_total)}\n"
-            f"🚨🚨 REVERSAL SIGNAL: PUT BUY 🔴🚨🚨\n"
-            f"Time: {now.strftime('%I:%M %p')}"
-        )
-        await context.bot.send_message(chat_id=SUMMARY_CHAT_ID, text=message)
-        logging.info(f"🚨 SIGNAL SENT: PUT BUY ({format_money(r_bear_total)})")
+    signal_msg = None
     
-    elif r_bull_total >= 15e7 and r_bear_total <= 1e7:
-        message = (
-            f"Recent Bullish: {format_money(r_bull_opt)} option + {format_money(r_bull_fut)} future = {format_money(r_bull_total)}\n"
-            f"Recent Bearish: {format_money(r_bear_opt)} option + {format_money(r_bear_fut)} future = {format_money(r_bear_total)}\n"
-            f"🚨🚨 REVERSAL SIGNAL: CALL BUY 🔵🚨🚨\n"
-            f"Time: {now.strftime('%I:%M %p')}"
-        )
-        await context.bot.send_message(chat_id=SUMMARY_CHAT_ID, text=message)
-        logging.info(f"🚨 SIGNAL SENT: CALL BUY ({format_money(r_bull_total)})")
-    
+    # 3. SIGNAL LOGIC
+    # --- BULLISH SIGNALS ---
+    if bn_bull_1m >= 15e7 and bn_bear_1m <= 1e7:
+        # Check Engine Match
+        engine_match = (hdfc_bull_1m > 1e7) or (icici_bull_1m > 1e7)
+        full_match = (hdfc_bull_1m > 5e7) and (icici_bull_1m > 5e7)
+        
+        if hdfc_bias == "BEAR" and icici_bias == "BEAR" and not engine_match:
+            signal_msg = "⚠️ FAKE BOUNCE: BN Call flow detected, but HDFC/ICICI Engine is still RED. Avoid Buying Call. 🔴"
+        elif current_time_int <= 1000 and engine_match:
+            daily_state["boss_trend"] = "BULLISH"
+            signal_msg = f"🔥 BOSS ATTACK: CALL BUY 🔵\n🛡️ SL: 60 pts | 🎯 TGT: 120/250 pts\nBN: {format_money(bn_bull_1m)} | Engine: MATCH ✅"
+        elif full_match:
+            signal_msg = f"💎 DUAL MATCH: CALL BUY 🔵\n🛡️ SL: 40 pts | 🎯 TGT: 80/150 pts\nEngine: HDFC 🟢 ICICI 🟢 (100%)"
+        elif daily_state["boss_trend"] == "BULLISH" and engine_match:
+            signal_msg = f"📈 TREND RESUMPTION: CALL BUY 🔵\n🛡️ SL: 35 pts | 🎯 TGT: 70/120 pts\nEngine Attacking Again - Trend Continues."
+        else:
+            signal_msg = f"🔵 SCALP BOUNCE: CALL BUY\n🛡️ SL: 25 pts | 🎯 TGT: 40/60 pts\n⚠️ FAST SCALP ONLY."
+
+    # --- BEARISH SIGNALS ---
+    elif bn_bear_1m >= 15e7 and bn_bull_1m <= 1e7:
+        engine_match = (hdfc_bear_1m > 1e7) or (icici_bear_1m > 1e7)
+        full_match = (hdfc_bear_1m > 5e7) and (icici_bear_1m > 5e7)
+        
+        if hdfc_bias == "BULL" and icici_bias == "BULL" and not engine_match:
+            signal_msg = "⚠️ FAKE DROP: BN Put flow detected, but HDFC/ICICI Engine is still GREEN. Avoid Buying Put. 🔵"
+        elif current_time_int <= 1000 and engine_match:
+            daily_state["boss_trend"] = "BEARISH"
+            signal_msg = f"🔥 BOSS ATTACK: PUT BUY 🔴\n🛡️ SL: 60 pts | 🎯 TGT: 120/250 pts\nBN: {format_money(bn_bear_1m)} | Engine: MATCH ✅"
+        elif full_match:
+            signal_msg = f"💎 DUAL MATCH: PUT BUY 🔴\n🛡️ SL: 40 pts | 🎯 TGT: 80/150 pts\nEngine: HDFC 🔴 ICICI 🔴 (100%)"
+        elif daily_state["boss_trend"] == "BEARISH" and engine_match:
+            signal_msg = f"📈 TREND RESUMPTION: PUT BUY 🔴\n🛡️ SL: 35 pts | 🎯 TGT: 70/120 pts\nEngine Attacking Again - Trend Continues."
+        else:
+            signal_msg = f"🔴 SCALP DROP: PUT BUY\n🛡️ SL: 25 pts | 🎯 TGT: 40/60 pts\n⚠️ FAST SCALP ONLY."
+
+    # 4. SEND ALERT (Rate limited to once per 2 mins for same signal)
+    if signal_msg:
+        await context.bot.send_message(chat_id=SUMMARY_CHAT_ID, text=f"{signal_msg}\nTime: {now.strftime('%I:%M %p')}")
+        logging.info(f"🚨 SIGNAL SENT: {signal_msg[:30]}...")
     else:
-        # Quiet background logging
-        logging.info(f"⚖ Monitoring... (Bull: {format_money(r_bull_total)} | Bear: {format_money(r_bear_total)})")
+        logging.info(f"⚖ Monitoring... (BN Bull: {format_money(bn_bull_1m)} | Bear: {format_money(bn_bear_1m)})")
 
 def main():
     if not BOT_TOKEN:
