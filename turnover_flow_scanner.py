@@ -42,14 +42,25 @@ LOT_SIZES = {
     "SBIN": 750
 }
 
+NEAR_ITM_RANGE = {
+    "BANKNIFTY": 100,
+    "HDFCBANK": 5,
+    "ICICIBANK": 10,
+    "AXISBANK": 10,
+    "SBIN": 5
+}
+
 def format_money(value):
     if value >= 1e7: return f"{value/1e7:.1f}Cr"
     elif value >= 1e5: return f"{value/1e5:.1f}L"
     else: return f"{value:.0f}"
 
-def classify_strike(strike, option_type, future_price):
+def classify_strike(strike, option_type, future_price, symbol=None):
     try:
         strike, future_price = float(strike), float(future_price)
+        near_range = NEAR_ITM_RANGE.get(symbol, 0)
+        if abs(strike - future_price) <= near_range:
+            return "ITM"
         if option_type == "CE": return "ITM" if strike < future_price else "OTM"
         if option_type == "PE": return "ITM" if strike > future_price else "OTM"
     except: pass
@@ -84,7 +95,7 @@ def parse_alert(text):
     if opt_match and future_price:
         strike = opt_match.group(1)
         option_type = opt_match.group(2)
-        zone = classify_strike(strike, option_type, future_price)
+        zone = classify_strike(strike, option_type, future_price, base_symbol)
 
     is_future = (opt_match is None)
 
