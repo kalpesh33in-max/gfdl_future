@@ -20,7 +20,7 @@ SUMMARY_CHAT_ID = os.getenv("SUMMARY_CHAT_ID")
 # Buffer stores parsed alerts for the 5-minute window
 alerts_buffer = []
 
-TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK", "AXISBANK", "SBIN"]
+TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK", "NIFTY", "SENSEX", "RELIANCE", "MIDCPNIFTY", "FINNIFTY"]
 
 # Matches the specific display order of the Summary Bot
 OPTION_DISPLAY_ORDER = [
@@ -38,16 +38,22 @@ LOT_SIZES = {
     "BANKNIFTY": 30,
     "HDFCBANK": 550,
     "ICICIBANK": 700,
-    "AXISBANK": 625,
-    "SBIN": 750
+    "NIFTY": 65,
+    "SENSEX": 20,
+    "RELIANCE": 500,
+    "MIDCPNIFTY": 120,
+    "FINNIFTY": 60
 }
 
 NEAR_ITM_RANGE = {
     "BANKNIFTY": 100,
     "HDFCBANK": 5,
     "ICICIBANK": 10,
-    "AXISBANK": 10,
-    "SBIN": 5
+    "NIFTY": 50,
+    "SENSEX": 100,
+    "RELIANCE": 10,
+    "MIDCPNIFTY": 25,
+    "FINNIFTY": 50
 }
 
 def format_money(value):
