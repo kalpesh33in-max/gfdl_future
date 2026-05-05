@@ -21,6 +21,7 @@ SUMMARY_CHAT_ID = os.getenv("SUMMARY_CHAT_ID")
 alerts_buffer = []
 
 TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK", "NIFTY", "SENSEX", "RELIANCE", "MIDCPNIFTY", "FINNIFTY"]
+TRACK_SYMBOLS_SORTED = sorted(TRACK_SYMBOLS, key=len, reverse=True)
 
 # Matches the specific display order of the Summary Bot
 OPTION_DISPLAY_ORDER = [
@@ -92,7 +93,8 @@ def parse_alert(text):
     price = float(price_match.group(1)) if price_match else None
     future_price = float(future_match.group(1)) if future_match else None
 
-    base_symbol = next((s for s in TRACK_SYMBOLS if s in symbol_full), None)
+    # Prefer the longest match to avoid substring collisions (e.g. MIDCPNIFTY contains NIFTY).
+    base_symbol = next((s for s in TRACK_SYMBOLS_SORTED if s in symbol_full), None)
     if not base_symbol: return None
 
     opt_match = re.search(r"(\d+)(CE|PE)$", symbol_full)
